@@ -1,4 +1,4 @@
-import { getSessionId, getTabId, createPageViewId } from "./Identity";
+import { getSessionId } from "./Identity";
 
 import { addEvent } from "./EventQueue";
 
@@ -8,8 +8,6 @@ let isStarted = false;
 function startPage() {
   currentPage = {
     sessionId: getSessionId(),
-    tabId: getTabId(),
-    pageViewId: createPageViewId(),
     url: window.location.href,
     enteredAt: new Date().toISOString(),
     startTime: performance.now(),
@@ -29,10 +27,6 @@ function finishPage(reason) {
     type: "page-transition",
 
     sessionId: currentPage.sessionId,
-
-    tabId: currentPage.tabId,
-
-    pageViewId: currentPage.pageViewId,
 
     url: currentPage.url,
 

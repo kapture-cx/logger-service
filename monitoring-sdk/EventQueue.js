@@ -1,6 +1,6 @@
 // monitoring/EventQueue.js
 
-import { getSessionId } from "./Identity";
+import { getPageViewId, getSessionId, getTabId } from "./Identity";
 
 const queue = []
 
@@ -8,6 +8,8 @@ export function addEvent(event) {
     queue.push({
         sessionId: getSessionId(),
         ...event,
+        tabId: getTabId(),
+        pageViewId: getPageViewId(),
     })
 }
 

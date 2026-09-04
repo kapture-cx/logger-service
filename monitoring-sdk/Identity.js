@@ -2,15 +2,36 @@ const SESSION_KEY = "monitoring_session_id";
 const TAB_KEY = "monitoring_tab_id";
 
 export function setSessionId(sessionId) {
-  localStorage.setItem(SESSION_KEY, sessionId);
+  const normalizedSessionId =
+    typeof sessionId === "string" ? sessionId.trim() : "";
+
+  if (!normalizedSessionId) {
+    return false;
+  }
+
+  try {
+    localStorage.setItem(SESSION_KEY, normalizedSessionId);
+    return true;
+  } catch (error) {
+    return false;
+  }
 }
 
 export function getSessionId() {
-  return localStorage.getItem(SESSION_KEY);
+  try {
+    return localStorage.getItem(SESSION_KEY);
+  } catch (error) {
+    return null;
+  }
 }
 
 export function clearSessionId() {
-  localStorage.removeItem(SESSION_KEY);
+  try {
+    localStorage.removeItem(SESSION_KEY);
+    return true;
+  } catch (error) {
+    return false;
+  }
 }
 
 export function getTabId() {

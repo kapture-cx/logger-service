@@ -4,6 +4,7 @@
 // <script src="https://logger.example.com/monitoring/v1/monitoring.min.js" data-app="nui"></script>
 
 import { MonitoringService, normalizeEndpoint } from "./MonitoringService"
+import { clearSessionId, setSessionId } from "./Identity"
 
 const PUBLIC_API_NAME = "kapture-monitoring"
 const PUBLIC_API_VERSION = 1
@@ -59,6 +60,43 @@ function getDefaultEndpoint(script) {
     return scriptUrl ? new URL("/api/logs", scriptUrl).href : undefined
 }
 
+function exposeSessionIdentityApi() {
+    const existingApi = getOwnDataProperty(window, "MonitoringService")
+    const isObjectLike = existingApi !== null && (
+        typeof existingApi === "object" || typeof existingApi === "function"
+    )
+    const publicApi = isObjectLike ? existingApi : {}
+
+    try {
+        const identityMethods = { setSessionId, clearSessionId }
+
+        Object.entries(identityMethods).forEach(([methodName, method]) => {
+            if (typeof getOwnDataProperty(publicApi, methodName) === "function") {
+                return
+            }
+
+            Object.defineProperty(publicApi, methodName, {
+                value: method,
+                enumerable: true,
+                writable: true,
+                configurable: true,
+            })
+        })
+
+        if (!isObjectLike) {
+            Object.freeze(publicApi)
+
+            Object.defineProperty(window, "MonitoringService", {
+                value: publicApi,
+                writable: false,
+                configurable: false,
+            })
+        }
+    } catch (_error) {
+        // Keep monitoring active if an incompatible global already uses this name.
+    }
+}
+
 function exposePublicApi(status) {
     const existingApi = getOwnDataProperty(window, "KaptureMonitoring")
 
@@ -91,6 +129,9 @@ function exposePublicApi(status) {
 
 const script = document.currentScript
 const clientConfig = readClientConfig()
+
+exposeSessionIdentityApi()
+
 const status = Object.freeze(MonitoringService.start({
     endpoint: normalizeEndpoint(script?.dataset.endpoint) || clientConfig.endpoint || getDefaultEndpoint(script),
     app: normalizeString(script?.dataset.app) || clientConfig.app,

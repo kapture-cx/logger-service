@@ -82,6 +82,36 @@ If the consuming application uses Content Security Policy, its `script-src` must
 allow this backend to load the SDK and its `connect-src` must allow the SDK to
 post events.
 
+## Associate events with a monitoring session
+
+The SDK starts collecting events as soon as the CDN script loads. Before login,
+events have `sessionId: null` when no monitoring ID was deliberately stored from
+an earlier session. After the application's existing login request succeeds,
+give the SDK a monitoring correlation ID:
+
+```js
+const monitoringSessionId = loginResponse.data.monitoringSessionId
+
+window.MonitoringService.setSessionId(monitoringSessionId)
+```
+
+After the application's existing logout request succeeds, clear it:
+
+```js
+window.MonitoringService.clearSessionId()
+```
+
+`setSessionId` accepts a non-empty string, stores its trimmed value, and returns
+`true`. Invalid values return `false` and leave the current session unchanged.
+`clearSessionId` returns `true` after removing the value. Pass only a monitoring
+correlation ID—never an access token, refresh token, password, or other
+credential.
+
+Only `setSessionId` and `clearSessionId` are exposed on
+`window.MonitoringService`. Session reads and tab/page-view identity remain SDK
+internals. The existing `window.KaptureMonitoring` API continues to provide the
+client-details integration described above.
+
 ## Update the monitoring SDK
 
 The editable source is in `monitoring-sdk/`. Never edit the minified file

@@ -6,6 +6,32 @@ import vm from "node:vm";
 
 const bundlePath = path.resolve("public/monitoring/v1/monitoring.min.js");
 
+function createStorage() {
+  const values = new Map();
+
+  return {
+    get length() {
+      return values.size;
+    },
+    clear() {
+      values.clear();
+    },
+    getItem(key) {
+      const normalizedKey = String(key);
+      return values.has(normalizedKey) ? values.get(normalizedKey) : null;
+    },
+    key(index) {
+      return Array.from(values.keys())[index] ?? null;
+    },
+    removeItem(key) {
+      values.delete(String(key));
+    },
+    setItem(key, value) {
+      values.set(String(key), String(value));
+    },
+  };
+}
+
 function createBrowserContext() {
   const intervals = [];
   const listeners = new Map();
@@ -58,6 +84,7 @@ function createBrowserContext() {
       };
     },
     location: { href: "https://crm.example.com/nui/" },
+    localStorage: createStorage(),
     performance: { now: () => 1 },
     setInterval(callback) {
       intervals.push(callback);
@@ -90,6 +117,7 @@ test("the browser SDK derives its endpoint and reads current client details", as
   vm.runInContext(bundle, context);
 
   const publicApi = browser.KaptureMonitoring;
+  const identityApi = browser.MonitoringService;
   const firstConsoleLog = browser.console.log;
   assert.equal(typeof publicApi.setClientDetailsProvider, "function");
   assert.equal(publicApi.name, "kapture-monitoring");
@@ -111,6 +139,7 @@ test("the browser SDK derives its endpoint and reads current client details", as
   assert.equal(intervals.length, 1);
   assert.equal(browser.console.log, firstConsoleLog);
   assert.equal(browser.KaptureMonitoring, publicApi);
+  assert.equal(browser.MonitoringService, identityApi);
 
   browser.console.log("First event");
   browser.console.info("Second event");
@@ -139,6 +168,146 @@ test("the browser SDK derives its endpoint and reads current client details", as
     userId: "456",
     tenantId: "acme",
   });
+});
+
+test("the public identity API controls the session on future events", async () => {
+  const bundle = await readFile(bundlePath, "utf8");
+  const { browser, intervals, requests } = createBrowserContext();
+  const context = vm.createContext(browser);
+
+  assert.equal(browser.localStorage.getItem("monitoring_session_id"), null);
+
+  vm.runInContext(bundle, context);
+
+  const identityApi = browser.MonitoringService;
+
+  assert.ok(identityApi);
+  assert.deepEqual(Object.keys(identityApi).sort(), [
+    "clearSessionId",
+    "setSessionId",
+  ]);
+  assert.equal(Object.isFrozen(identityApi), true);
+  assert.equal(typeof identityApi.setSessionId, "function");
+  assert.equal(typeof identityApi.clearSessionId, "function");
+  assert.equal(identityApi.getSessionId, undefined);
+  assert.equal(identityApi.getTabId, undefined);
+  assert.equal(identityApi.createPageViewId, undefined);
+
+  browser.console.log("Anonymous event");
+
+  assert.equal(identityApi.setSessionId("  TEST-SESSION-123  "), true);
+  assert.equal(
+    browser.localStorage.getItem("monitoring_session_id"),
+    "TEST-SESSION-123",
+  );
+
+  browser.console.info("Authenticated event");
+
+  for (const invalidSessionId of [null, undefined, "", "   "]) {
+    assert.equal(identityApi.setSessionId(invalidSessionId), false);
+    assert.equal(
+      browser.localStorage.getItem("monitoring_session_id"),
+      "TEST-SESSION-123",
+    );
+  }
+
+  assert.equal(identityApi.clearSessionId(), true);
+  assert.equal(browser.localStorage.getItem("monitoring_session_id"), null);
+
+  browser.console.warn("Logged-out event");
+  intervals[0]();
+  await Promise.resolve();
+
+  const payload = JSON.parse(requests[0].options.body);
+
+  assert.deepEqual(
+    payload.events.map((event) => [event.message, event.sessionId]),
+    [
+      ["Anonymous event", null],
+      ["Authenticated event", "TEST-SESSION-123"],
+      ["Logged-out event", null],
+    ],
+  );
+});
+
+test("the identity API merges into an existing MonitoringService object", async () => {
+  const bundle = await readFile(bundlePath, "utf8");
+  const { browser } = createBrowserContext();
+  const context = vm.createContext(browser);
+  const existingApi = {
+    start() {
+      return "existing start";
+    },
+    stop() {
+      return "existing stop";
+    },
+  };
+
+  browser.MonitoringService = existingApi;
+  vm.runInContext(bundle, context);
+
+  assert.equal(browser.MonitoringService, existingApi);
+  assert.equal(browser.MonitoringService.start(), "existing start");
+  assert.equal(browser.MonitoringService.stop(), "existing stop");
+  assert.equal(typeof browser.MonitoringService.setSessionId, "function");
+  assert.equal(typeof browser.MonitoringService.clearSessionId, "function");
+  assert.equal(
+    typeof browser.KaptureMonitoring.setClientDetailsProvider,
+    "function",
+  );
+});
+
+test("the identity API fails safely when local storage is unavailable", async () => {
+  const bundle = await readFile(bundlePath, "utf8");
+  const { browser, intervals, requests } = createBrowserContext();
+  const context = vm.createContext(browser);
+  const storageError = new Error("Storage is disabled");
+
+  browser.localStorage = {
+    getItem() {
+      throw storageError;
+    },
+    removeItem() {
+      throw storageError;
+    },
+    setItem() {
+      throw storageError;
+    },
+  };
+
+  vm.runInContext(bundle, context);
+
+  assert.equal(browser.MonitoringService.setSessionId("SESSION-123"), false);
+  assert.equal(browser.MonitoringService.clearSessionId(), false);
+
+  browser.console.log("Storage-disabled event");
+  intervals[0]();
+  await Promise.resolve();
+
+  const payload = JSON.parse(requests[0].options.body);
+
+  assert.equal(payload.events[0].sessionId, null);
+});
+
+test("event enrichment preserves a tracker's explicit session snapshot", async () => {
+  const bundle = await readFile(bundlePath, "utf8");
+  const { browser, intervals, requests } = createBrowserContext();
+  const context = vm.createContext(browser);
+
+  vm.runInContext(bundle, context);
+  browser.MonitoringService.setSessionId("CURRENT-SESSION");
+  browser.__captureErrorBoundaryEvent(
+    new Error("Page transition failed"),
+    {},
+    { sessionId: "PAGE-START-SESSION" },
+  );
+
+  intervals[0]();
+  await Promise.resolve();
+
+  const payload = JSON.parse(requests[0].options.body);
+
+  assert.equal(payload.events[0].sessionId, "PAGE-START-SESSION");
 });
 
 test("default console rules apply when cmId is unavailable or unknown", async () => {

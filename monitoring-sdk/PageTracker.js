@@ -55,13 +55,9 @@ function handleNavigation() {
 }
 
 function handleVisibilityChange() {
-  if (!currentPage) {
-    return;
-  }
-
   if (document.hidden) {
     finishPage("tab-hidden");
-  } else {
+  } else if (!currentPage) {
     startPage();
   }
 }

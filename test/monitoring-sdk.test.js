@@ -201,6 +201,34 @@ test("the browser SDK reports the final page transition during unload", async ()
   assert.equal(payload.events[0].url, "https://crm.example.com/nui/");
 });
 
+test("page monitoring restarts when a hidden tab becomes visible", async () => {
+  const bundle = await readFile(bundlePath, "utf8");
+  const { browser, intervals, requests } = createBrowserContext();
+  const context = vm.createContext(browser);
+
+  vm.runInContext(bundle, context);
+
+  browser.document.hidden = true;
+  browser.dispatchEvent({ type: "visibilitychange" });
+  browser.location.href = "https://crm.example.com/nui/customers";
+  browser.document.hidden = false;
+  browser.dispatchEvent({ type: "visibilitychange" });
+  browser.document.hidden = true;
+  browser.dispatchEvent({ type: "visibilitychange" });
+  intervals[0]();
+  await Promise.resolve();
+
+  const payload = JSON.parse(requests[0].options.body);
+
+  assert.deepEqual(
+    payload.events.map((event) => [event.reason, event.url]),
+    [
+      ["tab-hidden", "https://crm.example.com/nui/"],
+      ["tab-hidden", "https://crm.example.com/nui/customers"],
+    ],
+  );
+});
+
 test("the public identity API controls the session on future events", async () => {
   const bundle = await readFile(bundlePath, "utf8");
   const { browser, intervals, requests } = createBrowserContext();

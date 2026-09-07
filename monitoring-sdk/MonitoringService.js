@@ -10,6 +10,7 @@ import { getQueue } from "./EventQueue";
 import { startFetchTracker } from "./FetchTracker";
 import { getTabId } from "./Identity";
 import { OriginalConsole } from "./OriginalConsole";
+import { startPageTracker } from "./PageTracker";
 
 let clientDetailsProvider;
 
@@ -133,6 +134,7 @@ export const MonitoringService = {
         ignoredUrls: [endpoint],
       });
       startErrorBoundaryTracker();
+      startPageTracker();
 
       window.__kaptureMonitoringStarted = true;
 

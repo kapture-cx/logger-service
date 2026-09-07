@@ -70,6 +70,12 @@ function createBrowserContext() {
           app: "kapturecrm-ui",
         },
       },
+      hidden: false,
+      addEventListener(type, callback) {
+        const callbacks = listeners.get(type) || new Set();
+        callbacks.add(callback);
+        listeners.set(type, callbacks);
+      },
     },
     fetch: async (url, options) => {
       requests.push({ url, options });
@@ -84,6 +90,10 @@ function createBrowserContext() {
       };
     },
     location: { href: "https://crm.example.com/nui/" },
+    history: {
+      pushState() {},
+      replaceState() {},
+    },
     localStorage: createStorage(),
     performance: { now: () => 1 },
     setInterval(callback) {
@@ -168,6 +178,28 @@ test("the browser SDK derives its endpoint and reads current client details", as
     userId: "456",
     tenantId: "acme",
   });
+});
+
+test("the browser SDK reports page transitions", async () => {
+  const bundle = await readFile(bundlePath, "utf8");
+  const { browser, intervals, requests } = createBrowserContext();
+  const context = vm.createContext(browser);
+
+  vm.runInContext(bundle, context);
+
+  browser.location.href = "https://crm.example.com/nui/customers";
+  browser.dispatchEvent({ type: "popstate" });
+  intervals[0]();
+  await Promise.resolve();
+
+  assert.equal(requests.length, 1);
+
+  const payload = JSON.parse(requests[0].options.body);
+
+  assert.equal(payload.events.length, 1);
+  assert.equal(payload.events[0].type, "page-transition");
+  assert.equal(payload.events[0].reason, "navigation");
+  assert.equal(payload.events[0].url, "https://crm.example.com/nui/");
 });
 
 test("the public identity API controls the session on future events", async () => {

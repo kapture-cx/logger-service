@@ -138,7 +138,7 @@ export const MonitoringService = {
 
       window.__kaptureMonitoringStarted = true;
 
-      setInterval(() => {
+      const reportEvents = (event) => {
         const events = getQueue();
 
         if (events.length === 0) {
@@ -148,6 +148,7 @@ export const MonitoringService = {
         fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          keepalive: event?.type === "pagehide",
           body: JSON.stringify({
             app: config.app,
             events,
@@ -159,7 +160,10 @@ export const MonitoringService = {
             error,
           ),
         );
-      }, 20000);
+      };
+
+      window.addEventListener("pagehide", reportEvents);
+      setInterval(reportEvents, 20000);
 
       return {
         status: "success",

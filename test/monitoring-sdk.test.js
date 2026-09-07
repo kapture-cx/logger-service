@@ -180,25 +180,24 @@ test("the browser SDK derives its endpoint and reads current client details", as
   });
 });
 
-test("the browser SDK reports page transitions", async () => {
+test("the browser SDK reports the final page transition during unload", async () => {
   const bundle = await readFile(bundlePath, "utf8");
-  const { browser, intervals, requests } = createBrowserContext();
+  const { browser, requests } = createBrowserContext();
   const context = vm.createContext(browser);
 
   vm.runInContext(bundle, context);
 
-  browser.location.href = "https://crm.example.com/nui/customers";
-  browser.dispatchEvent({ type: "popstate" });
-  intervals[0]();
+  browser.dispatchEvent({ type: "pagehide", persisted: false });
   await Promise.resolve();
 
   assert.equal(requests.length, 1);
+  assert.equal(requests[0].options.keepalive, true);
 
   const payload = JSON.parse(requests[0].options.body);
 
   assert.equal(payload.events.length, 1);
   assert.equal(payload.events[0].type, "page-transition");
-  assert.equal(payload.events[0].reason, "navigation");
+  assert.equal(payload.events[0].reason, "page-unloaded");
   assert.equal(payload.events[0].url, "https://crm.example.com/nui/");
 });
 

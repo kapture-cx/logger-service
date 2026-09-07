@@ -14,5 +14,7 @@ export function addEvent(event) {
 }
 
 export function getQueue() {
-    return queue.splice(0, queue.length)
+    const tabId = getTabId()
+
+    return queue.splice(0, queue.length).map(event => ({ ...event, tabId }))
 }

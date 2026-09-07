@@ -8,6 +8,7 @@ import {
 } from "./ErrorTracker";
 import { getQueue } from "./EventQueue";
 import { startFetchTracker } from "./FetchTracker";
+import { getTabId } from "./Identity";
 import { OriginalConsole } from "./OriginalConsole";
 
 let clientDetailsProvider;
@@ -121,6 +122,8 @@ export const MonitoringService = {
       if (typeof config.getClientDetails === "function") {
         clientDetailsProvider = config.getClientDetails;
       }
+
+      getTabId();
 
       startConsoleTracker(getCurrentCmId);
       startErrorTracker();

@@ -169,6 +169,18 @@ export const getLogsByFilters = async (payload) => {
            'timestamp with time zone'
          )
          THEN (expanded.event->>'timestamp')::timestamptz
+         WHEN expanded.event->>'type' = 'page-transition'
+           AND pg_input_is_valid(
+             expanded.event->>'leftAt',
+             'timestamp with time zone'
+           )
+         THEN (expanded.event->>'leftAt')::timestamptz
+         WHEN expanded.event->>'type' = 'page-transition'
+           AND pg_input_is_valid(
+             expanded.event->>'enteredAt',
+             'timestamp with time zone'
+           )
+         THEN (expanded.event->>'enteredAt')::timestamptz
          ELSE NULL
        END) BETWEEN $${startDatePosition}::timestamptz
                 AND $${endDatePosition}::timestamptz`,

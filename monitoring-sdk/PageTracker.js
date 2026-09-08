@@ -22,9 +22,12 @@ function finishPage(reason) {
   const now = performance.now();
 
   const duration = Math.round(now - currentPage.startTime);
+  const timestamp = new Date().toISOString();
 
   addEvent({
     type: "page-transition",
+
+    timestamp,
 
     sessionId: currentPage.sessionId,
 
@@ -32,7 +35,7 @@ function finishPage(reason) {
 
     enteredAt: currentPage.enteredAt,
 
-    leftAt: new Date().toISOString(),
+    leftAt: timestamp,
 
     duration,
 

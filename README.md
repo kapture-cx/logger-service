@@ -237,7 +237,8 @@ format directly. Offset-based ISO values such as
 `2026-08-25T14:30:00+05:30` are also accepted. The range is inclusive and
 compares against each event's `timestamp`, not the database row's `created_at`.
 Events with a missing or invalid timestamp are excluded when a date range is
-active.
+active. Legacy `page-transition` events without `timestamp` use `leftAt`, or
+`enteredAt` when `leftAt` is unavailable, so they remain searchable by date.
 
 Every filter combination returns the same event structure:
 

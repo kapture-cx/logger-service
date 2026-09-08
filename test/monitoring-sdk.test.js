@@ -199,6 +199,8 @@ test("the browser SDK reports the final page transition during unload", async ()
   assert.equal(payload.events[0].type, "page-transition");
   assert.equal(payload.events[0].reason, "page-unloaded");
   assert.equal(payload.events[0].url, "https://crm.example.com/nui/");
+  assert.equal(payload.events[0].timestamp, payload.events[0].leftAt);
+  assert.ok(!Number.isNaN(Date.parse(payload.events[0].timestamp)));
 });
 
 test("page monitoring restarts when a hidden tab becomes visible", async () => {

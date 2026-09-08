@@ -34,8 +34,6 @@ export const fetchLogs = async (_req, res, next) => {
 
 export const addLogs = async (req, res, next) => {
   try {
-    console.log("Received payload:", JSON.stringify(req.body, null, 2));
-
     const log = await addLogsModel(req.body);
     return handleResponse(res, 201, "Logs added successfully", log);
   } catch (error) {

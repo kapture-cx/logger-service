@@ -4,10 +4,11 @@ import {
   fetchLogs,
   fetchLogsByFilters,
 } from "../controller/userController.js";
+import sanitizeLogs from "../middlewares/sanitizeLogs.js";
 
 const router = express.Router();
 
-router.post("/logs", addLogs);
+router.post("/logs", sanitizeLogs, addLogs);
 router.get(["/logs", "/fetch-logs"], fetchLogs);
 router.post("/logs/filter", fetchLogsByFilters);
 

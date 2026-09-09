@@ -20,6 +20,10 @@ export const CLIENT_MONITORING_CONFIG = {
       "web_socket",
       "jwt_access_token",
       "KaptureHandler",
+      "<<< MESSAGE", 
+      ">>> CONNECT", 
+      ">>> SUBSCRIBE", 
+      ">>> SEND"
     ],
     ignoredUrls: [
       "https://firebaselogging-pa.googleapis.com",

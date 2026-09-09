@@ -23,7 +23,9 @@ export const CLIENT_MONITORING_CONFIG = {
       "<<< MESSAGE", 
       ">>> CONNECT", 
       ">>> SUBSCRIBE", 
-      ">>> SEND"
+      ">>> SEND", 
+      "PING", 
+      "PONG"
     ],
     ignoredUrls: [
       "https://firebaselogging-pa.googleapis.com",

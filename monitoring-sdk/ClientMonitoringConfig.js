@@ -11,10 +11,12 @@ export const CLIENT_MONITORING_CONFIG = {
     INCLUDED_IGNORED_CONSOLE_PHRASES: [
       "expiryTimestamp (ms) invalid",
       "Skipping registration",
+      "Initiating PONG...",
       "FirebaseService",
       "Whoops! Lost connection to",
       "WebSocketService",
       "Web Socket",
+      "Material-UI: The Menu component doesn't accept a Fragment as a child",
       "web_socket",
       "jwt_access_token",
       "KaptureHandler",
@@ -26,7 +28,7 @@ export const CLIENT_MONITORING_CONFIG = {
       "https://api.eu.amplitude.com",
     ],
   },
-  "415": {
+  415: {
     EXACT_IGNORED_CONSOLE_MESSAGES: ["Exact client message"],
     INCLUDED_IGNORED_CONSOLE_PHRASES: ["partial client phrase"],
     ignoredUrls: ["https://client-service.example.com"],

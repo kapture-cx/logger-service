@@ -97,6 +97,7 @@ function exposeSessionIdentityApi() {
     }
 }
 
+// function to expose certain monitoring details
 function exposePublicApi(status) {
     const existingApi = getOwnDataProperty(window, "KaptureMonitoring")
 

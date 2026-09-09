@@ -24,6 +24,7 @@ export const CLIENT_MONITORING_CONFIG = {
       ">>> CONNECT", 
       ">>> SUBSCRIBE", 
       ">>> SEND", 
+      "<<< ERROR", 
       "PING", 
       "PONG"
     ],
@@ -32,6 +33,10 @@ export const CLIENT_MONITORING_CONFIG = {
       "https://www.google-analytics.com",
       "https://analytics.google.com",
       "https://api.eu.amplitude.com",
+      "https://gs.eu.amplitude.com/sdk/v1/decide", 
+      "https://gs.eu.amplitude.com/sdk/v1/state", 
+      "https://gs.eu.amplitude.com/sdk/v1/config", 
+      "https://gs.eu.amplitude.com/sdk/v1/resource_center"
     ],
   },
   415: {

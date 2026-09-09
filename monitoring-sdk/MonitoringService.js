@@ -39,7 +39,9 @@ function getCurrentCmId() {
 
   try {
     const cmId = clientDetailsProvider()?.cmId;
-    return cmId === undefined || cmId === null ? undefined : String(cmId).trim();
+    return cmId === undefined || cmId === null
+      ? undefined
+      : String(cmId).trim();
   } catch (error) {
     return undefined;
   }
@@ -103,6 +105,15 @@ export const MonitoringService = {
 
   start(config = {}) {
     try {
+      const shouldMonitor = true || window.location.hostname !== "localhost";
+
+      if (!shouldMonitor) {
+        return {
+          status: "success",
+          message: "Monitoring is disabled on localhost",
+        };
+      }
+
       if (window.__kaptureMonitoringStarted) {
         return {
           status: "success",
@@ -171,10 +182,7 @@ export const MonitoringService = {
       };
     } catch (error) {
       try {
-        OriginalConsole.error(
-          "MonitoringService: failed to attach",
-          error,
-        );
+        OriginalConsole.error("MonitoringService: failed to attach", error);
       } catch (_error) {
         // Monitoring errors must never prevent the application from loading.
       }

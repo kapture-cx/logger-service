@@ -68,7 +68,11 @@ function exposeSessionIdentityApi() {
     const publicApi = isObjectLike ? existingApi : {}
 
     try {
-        const identityMethods = { setSessionId, clearSessionId }
+        const identityMethods = {
+            setSessionId,
+            clearSessionId,
+            flush: () => MonitoringService.flush(),
+        }
 
         Object.entries(identityMethods).forEach(([methodName, method]) => {
             if (typeof getOwnDataProperty(publicApi, methodName) === "function") {
@@ -77,7 +81,7 @@ function exposeSessionIdentityApi() {
 
             Object.defineProperty(publicApi, methodName, {
                 value: method,
-                enumerable: true,
+                enumerable: methodName !== "flush",
                 writable: true,
                 configurable: true,
             })

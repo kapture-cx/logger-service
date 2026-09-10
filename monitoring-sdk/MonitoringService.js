@@ -6,13 +6,14 @@ import {
   startErrorTracker,
   startPromiseTracker,
 } from "./ErrorTracker";
-import { getQueue } from "./EventQueue";
+import { getQueue, restoreQueue } from "./EventQueue";
 import { startFetchTracker } from "./FetchTracker";
 import { getTabId } from "./Identity";
 import { OriginalConsole } from "./OriginalConsole";
 import { startPageTracker } from "./PageTracker";
 
 let clientDetailsProvider;
+let reportEvents;
 
 export function normalizeEndpoint(value) {
   const endpoint =
@@ -90,6 +91,10 @@ function getFreshClientDetails() {
 }
 
 export const MonitoringService = {
+  flush() {
+    return reportEvents ? reportEvents() : Promise.resolve(false);
+  },
+
   // if SDK loads first , this sets clientDetailsProvider
   setClientDetailsProvider(provider) {
     if (typeof provider !== "function") {
@@ -149,28 +154,38 @@ export const MonitoringService = {
 
       window.__kaptureMonitoringStarted = true;
 
-      const reportEvents = (event) => {
+      reportEvents = async (event) => {
         const events = getQueue();
 
         if (events.length === 0) {
-          return;
+          return true;
         }
 
-        fetch(endpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          keepalive: event?.type === "pagehide",
-          body: JSON.stringify({
-            app: config.app,
-            events,
-            clientDetails: getFreshClientDetails(),
-          }),
-        }).catch((error) =>
+        try {
+          const response = await fetch(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            keepalive: event?.type === "pagehide",
+            body: JSON.stringify({
+              app: config.app,
+              events,
+              clientDetails: getFreshClientDetails(),
+            }),
+          });
+
+          if (!response.ok) {
+            throw new Error(`Monitoring endpoint returned ${response.status}`);
+          }
+
+          return true;
+        } catch (error) {
+          restoreQueue(events);
           OriginalConsole.error(
             "MonitoringService: failed to report events",
             error,
-          ),
-        );
+          );
+          return false;
+        }
       };
 
       window.addEventListener("pagehide", reportEvents);

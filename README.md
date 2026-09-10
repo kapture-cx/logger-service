@@ -95,10 +95,15 @@ const monitoringSessionId = loginResponse.data.monitoringSessionId
 window.MonitoringService.setSessionId(monitoringSessionId)
 ```
 
-After the application's existing logout request succeeds, clear it:
+After the application's existing logout request succeeds, flush any queued
+events before clearing the monitoring session:
 
 ```js
-window.MonitoringService.clearSessionId()
+try {
+  await window.MonitoringService.flush()
+} finally {
+  window.MonitoringService.clearSessionId()
+}
 ```
 
 `setSessionId` accepts a non-empty string, stores its trimmed value, and returns
@@ -107,7 +112,7 @@ window.MonitoringService.clearSessionId()
 correlation ID—never an access token, refresh token, password, or other
 credential.
 
-Only `setSessionId` and `clearSessionId` are exposed on
+Only `setSessionId`, `clearSessionId`, and `flush` are exposed on
 `window.MonitoringService`. Session reads and tab/page-view identity remain SDK
 internals. The existing `window.KaptureMonitoring` API continues to provide the
 client-details integration described above.

@@ -1,5 +1,3 @@
-// monitoring/EventQueue.js
-
 import { getPageViewId, getSessionId, getTabId } from "./Identity";
 
 const queue = []

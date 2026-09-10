@@ -37,7 +37,8 @@ export const CLIENT_MONITORING_CONFIG = {
       "https://gs.eu.amplitude.com/sdk/v1/decide", 
       "https://gs.eu.amplitude.com/sdk/v1/state", 
       "https://gs.eu.amplitude.com/sdk/v1/config", 
-      "https://gs.eu.amplitude.com/sdk/v1/resource_center"
+      "https://gs.eu.amplitude.com/sdk/v1/resource_center", 
+      "https://logger.kapturecrm.com/logger"
     ],
   },
   415: {

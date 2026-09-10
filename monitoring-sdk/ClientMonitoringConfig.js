@@ -26,7 +26,8 @@ export const CLIENT_MONITORING_CONFIG = {
       ">>> SEND", 
       "<<< ERROR", 
       "PING", 
-      "PONG"
+      "PONG", 
+      "DuplicateAPICallChecker"
     ],
     ignoredUrls: [
       "https://firebaselogging-pa.googleapis.com",

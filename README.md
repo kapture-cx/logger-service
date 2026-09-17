@@ -33,8 +33,15 @@ omitted, the SDK derives `/api/logs` from the script URL:
 <script
   src="http://localhost:5001/monitoring/v1/monitoring.min.js"
   data-app="kapturecrm-ui"
+  data-endpoint="http://localhost:5001/api/logs"
+  data-websocket-end-point="ws://localhost:5001/api/live-monitoring"
 ></script>
 ```
+
+`data-websocket-end-point` is optional and is the only way to enable the SDK's
+live WebSocket connection. It must be a complete `ws://` or `wss://` URL; the
+SDK never derives it from the HTTP endpoint. When it is omitted or invalid,
+normal HTTP monitoring continues without opening a WebSocket.
 
 The `/v1/` segment pins the application to the version 1 public SDK contract.
 Future breaking contracts will use a separate major-version URL such as `/v2/`.
@@ -73,6 +80,62 @@ before loading the script. The configuration supports:
 `data-endpoint` and `data-app` take precedence over global configuration. When
 neither endpoint is supplied, the SDK derives `/api/logs` from its own source
 URL. The script loads as a classic IIFE and starts automatically.
+
+## Live agent monitoring (development only)
+
+Live monitoring is deliberately disabled by default and cannot run when
+`NODE_ENV=production`. To enable the backend during local development, set:
+
+```text
+NODE_ENV=development
+LIVE_MONITORING_ENABLED=true
+FRONTEND_ORIGINS=http://localhost:3000
+```
+
+The WebSocket endpoint is `/api/live-monitoring`. Its browser `Origin` must be
+included in `FRONTEND_ORIGINS`. The current restriction is a development safety
+boundary, not dashboard authentication. Add real dashboard authorization before
+making live monitoring available in production.
+
+An SDK tab registers after its client-details provider supplies both
+`clientKey` and `userId`:
+
+```json
+{
+  "type": "AGENT_CONNECT",
+  "clientKey": "democrm",
+  "userId": "120040",
+  "tabId": "tab-1",
+  "app": "kapturecrm-ui",
+  "agent": "Ankit Tiwari"
+}
+```
+
+The future UI in `logger-UI-dashboard` can use one WebSocket connection and the
+following protocol:
+
+1. Register the selected agent with
+   `{ "type": "DASHBOARD_CONNECT", "clientKey": "democrm", "userId": "120040" }`.
+2. Read the matching presence snapshot shaped as
+   `{ "type": "AGENTS", "agents": [...] }`. The array contains that one
+   agent with all connected tabs, or is empty when the agent is offline.
+3. Start an agent with
+   `{ "type": "START_LIVE", "clientKey": "democrm", "userId": "120040" }`.
+4. Read events shaped as `{ "type": "LIVE_EVENT", "event": {...} }`.
+5. Stop an agent with
+   `{ "type": "STOP_LIVE", "clientKey": "democrm", "userId": "120040" }`.
+
+Presence is grouped by `clientKey:userId`, while the `tabs` array preserves each
+browser tab's existing `tabId`. Each dashboard receives presence only for the
+exact identity supplied in its latest `DASHBOARD_CONNECT`; sending that message
+again changes the filter without opening another socket and removes that
+dashboard's previous subscription. `START_LIVE` and `LIVE_EVENT` routing must
+match the same selected identity, while all tabs belonging to that identity are
+included. Starting an agent enables all current tabs and any new tab that
+connects while a dashboard remains subscribed. The dashboard can obtain each
+tab's current URL from its latest live `page-transition` event. Live events are
+best-effort and are not replayed after a disconnect; every event still follows
+the normal HTTP queue and storage path.
 
 The SDK file is intentionally public. Browser log submission is restricted by
 the API origin allowlist; CORS is not authentication and does not prevent direct

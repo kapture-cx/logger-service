@@ -9,6 +9,10 @@ import {
 import { getQueue, restoreQueue } from "./EventQueue";
 import { startFetchTracker } from "./FetchTracker";
 import { getTabId } from "./Identity";
+import {
+  initializeLiveMonitor,
+  refreshLiveMonitorIdentity,
+} from "./LiveMonitor";
 import { OriginalConsole } from "./OriginalConsole";
 import { startPageTracker } from "./PageTracker";
 
@@ -105,6 +109,7 @@ export const MonitoringService = {
     }
 
     clientDetailsProvider = provider;
+    refreshLiveMonitorIdentity();
     return true;
   },
 
@@ -141,6 +146,12 @@ export const MonitoringService = {
       }
 
       getTabId();
+
+      initializeLiveMonitor({
+        app: config.app,
+        getClientDetails: getFreshClientDetails,
+        websocketEndPoint: config.websocketEndPoint,
+      });
 
       startConsoleTracker(getCurrentCmId);
       startErrorTracker();

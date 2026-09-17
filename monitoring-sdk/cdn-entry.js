@@ -5,6 +5,7 @@
 
 import { MonitoringService, normalizeEndpoint } from "./MonitoringService"
 import { clearSessionId, setSessionId } from "./Identity"
+import { normalizeWebSocketEndPoint } from "./LiveMonitor"
 
 const PUBLIC_API_NAME = "kapture-monitoring"
 const PUBLIC_API_VERSION = 1
@@ -139,6 +140,7 @@ exposeSessionIdentityApi()
 
 const status = Object.freeze(MonitoringService.start({
     endpoint: normalizeEndpoint(script?.dataset.endpoint) || clientConfig.endpoint || getDefaultEndpoint(script),
+    websocketEndPoint: normalizeWebSocketEndPoint(script?.dataset.websocketEndPoint),
     app: normalizeString(script?.dataset.app) || clientConfig.app,
     getClientDetails: clientConfig.getClientDetails,
 }))

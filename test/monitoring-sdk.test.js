@@ -36,6 +36,7 @@ function createBrowserContext() {
   const intervals = [];
   const listeners = new Map();
   const requests = [];
+  const timeouts = [];
   let nextId = 0;
 
   const browser = {
@@ -100,6 +101,10 @@ function createBrowserContext() {
       intervals.push(callback);
       return intervals.length;
     },
+    setTimeout(callback, delay) {
+      timeouts.push({ callback, delay });
+      return timeouts.length;
+    },
     addEventListener(type, callback) {
       const callbacks = listeners.get(type) || new Set();
       callbacks.add(callback);
@@ -116,7 +121,51 @@ function createBrowserContext() {
   browser.window = browser;
   browser.globalThis = browser;
 
-  return { browser, intervals, requests };
+  return { browser, intervals, requests, timeouts };
+}
+
+function createFakeWebSocket() {
+  return class FakeWebSocket {
+    static instances = [];
+
+    constructor(url) {
+      this.url = url;
+      this.readyState = 0;
+      this.sent = [];
+      this.listeners = new Map();
+      FakeWebSocket.instances.push(this);
+    }
+
+    addEventListener(type, callback) {
+      const callbacks = this.listeners.get(type) || new Set();
+      callbacks.add(callback);
+      this.listeners.set(type, callbacks);
+    }
+
+    emit(type, event = {}) {
+      this.listeners.get(type)?.forEach((callback) => callback(event));
+    }
+
+    open() {
+      this.readyState = 1;
+      this.emit("open");
+    }
+
+    receive(message) {
+      this.emit("message", {
+        data: typeof message === "string" ? message : JSON.stringify(message),
+      });
+    }
+
+    send(message) {
+      this.sent.push(JSON.parse(message));
+    }
+
+    close() {
+      this.readyState = 3;
+      this.emit("close");
+    }
+  };
 }
 
 test("the browser SDK derives its endpoint and reads current client details", async () => {
@@ -552,4 +601,149 @@ test("invalid client details do not stop a batch request", async () => {
   const payload = JSON.parse(requests[0].options.body);
   assert.equal(payload.events.length, 1);
   assert.deepEqual(payload.clientDetails, {});
+});
+
+test("live monitoring uses only the explicit WebSocket script attribute", async () => {
+  const bundle = await readFile(bundlePath, "utf8");
+
+  for (const websocketEndPoint of [undefined, "https://logger.example.com/live"]) {
+    const { browser } = createBrowserContext();
+    const FakeWebSocket = createFakeWebSocket();
+    browser.WebSocket = FakeWebSocket;
+    browser.document.currentScript.dataset.websocketEndPoint = websocketEndPoint;
+
+    vm.runInContext(bundle, vm.createContext(browser));
+    assert.equal(FakeWebSocket.instances.length, 0);
+  }
+});
+
+test("live events are additive and stop without affecting HTTP reporting", async () => {
+  const bundle = await readFile(bundlePath, "utf8");
+  const { browser, intervals, requests } = createBrowserContext();
+  const FakeWebSocket = createFakeWebSocket();
+  browser.WebSocket = FakeWebSocket;
+  browser.document.currentScript.dataset.websocketEndPoint =
+    "ws://localhost:5001/api/live-monitoring";
+  const context = vm.createContext(browser);
+
+  vm.runInContext(
+    `window.KaptureMonitoringConfig = {
+      getClientDetails: () => ({
+        clientKey: "democrm",
+        userId: 120040,
+        agent: "Ankit Tiwari",
+        designation: "Super Admin",
+        host: "democrm.kapturecrm.com"
+      })
+    }`,
+    context,
+  );
+  vm.runInContext(bundle, context);
+
+  assert.equal(FakeWebSocket.instances.length, 1);
+  const socket = FakeWebSocket.instances[0];
+  assert.equal(socket.url, "ws://localhost:5001/api/live-monitoring");
+  socket.open();
+
+  assert.deepEqual(socket.sent[0], {
+    type: "AGENT_CONNECT",
+    clientKey: "democrm",
+    userId: "120040",
+    tabId: "event-1",
+    app: "kapturecrm-ui",
+    agent: "Ankit Tiwari",
+    designation: "Super Admin",
+    host: "democrm.kapturecrm.com",
+  });
+
+  socket.receive({ type: "START_LIVE" });
+  browser.console.log("Streamed and queued");
+
+  const liveEvent = socket.sent.find((message) => message.type === "LIVE_EVENT");
+  assert.equal(liveEvent.event.message, "Streamed and queued");
+  assert.equal(liveEvent.event.app, "kapturecrm-ui");
+  assert.equal(liveEvent.event.clientDetails.userId, 120040);
+
+  socket.receive({ type: "STOP_LIVE" });
+  browser.console.info("Queued only");
+  assert.equal(
+    socket.sent.filter((message) => message.type === "LIVE_EVENT").length,
+    1,
+  );
+
+  intervals[0]();
+  await Promise.resolve();
+
+  const payload = JSON.parse(requests[0].options.body);
+  assert.deepEqual(
+    payload.events.map((event) => event.message),
+    ["Streamed and queued", "Queued only"],
+  );
+});
+
+test("live monitoring re-registers safely when the agent identity changes", async () => {
+  const bundle = await readFile(bundlePath, "utf8");
+  const { browser } = createBrowserContext();
+  const FakeWebSocket = createFakeWebSocket();
+  browser.WebSocket = FakeWebSocket;
+  browser.document.currentScript.dataset.websocketEndPoint =
+    "wss://logger.example.com/api/live-monitoring";
+  const context = vm.createContext(browser);
+
+  vm.runInContext(
+    `window.currentClient = { clientKey: "democrm", userId: 1 };
+     window.KaptureMonitoringConfig = {
+       getClientDetails: () => window.currentClient
+     }`,
+    context,
+  );
+  vm.runInContext(bundle, context);
+
+  const socket = FakeWebSocket.instances[0];
+  socket.open();
+  socket.receive({ type: "START_LIVE" });
+  browser.currentClient = { clientKey: "democrm", userId: 2 };
+  browser.console.log("Identity changed");
+
+  assert.deepEqual(
+    socket.sent.slice(-2).map((message) => message.type),
+    ["AGENT_DISCONNECT", "AGENT_CONNECT"],
+  );
+  assert.equal(socket.sent.at(-1).userId, "2");
+  assert.equal(
+    socket.sent.some(
+      (message) =>
+        message.type === "LIVE_EVENT" &&
+        message.event.message === "Identity changed",
+    ),
+    false,
+  );
+
+  browser.currentClient = {};
+  browser.console.warn("Logged out");
+  assert.equal(socket.sent.at(-1).type, "AGENT_DISCONNECT");
+  assert.equal(
+    socket.sent.some(
+      (message) =>
+        message.type === "LIVE_EVENT" && message.event.message === "Logged out",
+    ),
+    false,
+  );
+});
+
+test("live monitoring reconnects with backoff after a connection closes", async () => {
+  const bundle = await readFile(bundlePath, "utf8");
+  const { browser, timeouts } = createBrowserContext();
+  const FakeWebSocket = createFakeWebSocket();
+  browser.WebSocket = FakeWebSocket;
+  browser.document.currentScript.dataset.websocketEndPoint =
+    "ws://localhost:5001/api/live-monitoring";
+
+  vm.runInContext(bundle, vm.createContext(browser));
+  FakeWebSocket.instances[0].close();
+
+  assert.equal(timeouts.length, 1);
+  assert.equal(timeouts[0].delay, 1000);
+  timeouts[0].callback();
+  assert.equal(FakeWebSocket.instances.length, 2);
 });

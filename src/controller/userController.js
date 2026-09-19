@@ -1,6 +1,12 @@
 import {
   addLogs as addLogsModel,
+  appendIncidentChunk,
+  completeIncident as completeIncidentModel,
+  createIncident as createIncidentModel,
+  deleteIncident as deleteIncidentModel,
   getAllLogs,
+  getIncident as getIncidentModel,
+  getIncidents as getIncidentsModel,
   getLogsByFilters,
 } from "../models/useModel.js";
 
@@ -55,6 +61,84 @@ export const fetchLogsByFilters = async (req, res, next) => {
     }
 
     return handleResponse(res, 200, "Events fetched successfully", events);
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export const createIncident = async (req, res, next) => {
+  try {
+    return handleResponse(
+      res,
+      201,
+      "Incident recording started",
+      await createIncidentModel(req.body),
+    );
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export const addIncidentChunk = async (req, res, next) => {
+  try {
+    return handleResponse(
+      res,
+      200,
+      "Replay chunk stored",
+      await appendIncidentChunk(req.params.id, req.body),
+    );
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export const completeIncident = async (req, res, next) => {
+  try {
+    return handleResponse(
+      res,
+      200,
+      "Incident completed",
+      await completeIncidentModel(req.params.id, req.body),
+    );
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export const removeIncident = async (req, res, next) => {
+  try {
+    return handleResponse(
+      res,
+      200,
+      "Incident discarded",
+      await deleteIncidentModel(req.params.id),
+    );
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export const fetchIncident = async (req, res, next) => {
+  try {
+    return handleResponse(
+      res,
+      200,
+      "Incident fetched successfully",
+      await getIncidentModel(req.params.id),
+    );
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export const fetchIncidents = async (req, res, next) => {
+  try {
+    return handleResponse(
+      res,
+      200,
+      "Incidents fetched successfully",
+      await getIncidentsModel(req.query),
+    );
   } catch (error) {
     return next(error);
   }

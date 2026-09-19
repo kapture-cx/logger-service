@@ -159,6 +159,7 @@ function shouldIgnoreFetchRequest(url, getCurrentCmId) {
             return ignoresEntireOrigin
                 ? requestUrl.origin === normalizedIgnoredUrl.origin
                 : requestUrl.toString() === normalizedIgnoredUrl.toString()
+                    || requestUrl.pathname.startsWith(`${normalizedIgnoredUrl.pathname.replace(/\/$/, "")}/`)
         } catch (error) {
             return ignoredUrl === url
         }

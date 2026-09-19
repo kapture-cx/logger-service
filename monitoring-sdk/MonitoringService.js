@@ -15,6 +15,7 @@ import {
 } from "./LiveMonitor";
 import { OriginalConsole } from "./OriginalConsole";
 import { startPageTracker } from "./PageTracker";
+import { initializeIncidentRecorder } from "./IncidentRecorder";
 
 let clientDetailsProvider;
 let reportEvents;
@@ -147,6 +148,10 @@ export const MonitoringService = {
 
       getTabId();
 
+      const incidentEndpoint = config.incidentRecorder
+        ? new URL("/api/incidents", endpoint).href.replace(/\/$/, "")
+        : undefined;
+
       initializeLiveMonitor({
         app: config.app,
         getClientDetails: getFreshClientDetails,
@@ -158,7 +163,7 @@ export const MonitoringService = {
       startPromiseTracker();
       startFetchTracker({
         getCurrentCmId,
-        ignoredUrls: [endpoint],
+        ignoredUrls: [endpoint, incidentEndpoint],
       });
       startErrorBoundaryTracker();
       startPageTracker();
@@ -201,6 +206,16 @@ export const MonitoringService = {
 
       window.addEventListener("pagehide", reportEvents);
       setInterval(reportEvents, 20000);
+
+      if (config.incidentRecorder) {
+        initializeIncidentRecorder({
+          app: config.app,
+          endpoint: incidentEndpoint,
+          flushLogs: () => MonitoringService.flush(),
+          getClientDetails: getFreshClientDetails,
+          recorderScriptUrl: config.recorderScriptUrl,
+        });
+      }
 
       return {
         status: "success",

@@ -68,6 +68,17 @@ test("serves the v1 monitoring bundle publicly with safe revalidation headers", 
   assert.ok(bundle.length > 1_000);
 });
 
+test("serves the lazy v1 incident recorder bundle", async () => {
+  const response = await fetch(
+    `${baseUrl}/monitoring/v1/incident-recorder.min.js`,
+  );
+  const bundle = await response.text();
+
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type"), /javascript/);
+  assert.ok(bundle.length > 1_000);
+});
+
 test("revalidates the v1 monitoring bundle URL with its ETag", async () => {
   const firstResponse = await fetch(
     `${baseUrl}/monitoring/v1/monitoring.min.js`,
@@ -136,4 +147,28 @@ test("continues to support origin-less API clients", async () => {
 
   assert.equal(response.status, 400);
   assert.equal(body.message, "events must be an array");
+});
+
+test("validates an incident id before accessing storage", async () => {
+  const response = await fetch(`${baseUrl}/api/incidents/not-a-uuid`);
+  const body = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.equal(body.message, "incident id must be a valid UUID");
+});
+
+test("validates incident discovery filters before accessing storage", async () => {
+  const missingAppResponse = await fetch(`${baseUrl}/api/incidents`);
+  const missingAppBody = await missingAppResponse.json();
+
+  assert.equal(missingAppResponse.status, 400);
+  assert.equal(missingAppBody.message, "app must be a non-empty string");
+
+  const invalidCmIdResponse = await fetch(
+    `${baseUrl}/api/incidents?app=kapturecrm-ui&cmId=%20`,
+  );
+  const invalidCmIdBody = await invalidCmIdResponse.json();
+
+  assert.equal(invalidCmIdResponse.status, 400);
+  assert.equal(invalidCmIdBody.message, "cmId must be a non-empty string");
 });

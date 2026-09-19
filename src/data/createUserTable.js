@@ -61,6 +61,40 @@ const createLogsTable = async () => {
       ON public.logs (app, (client_details->>'cmId'))
     `);
 
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.incidents (
+        id UUID PRIMARY KEY,
+        app TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'recording',
+        title TEXT,
+        expected_behavior TEXT,
+        actual_behavior TEXT,
+        session_id TEXT,
+        tab_id TEXT,
+        page_view_id TEXT,
+        client_details JSONB,
+        replay_events JSONB NOT NULL DEFAULT '[]'::jsonb,
+        last_sequence INTEGER NOT NULL DEFAULT -1,
+        started_at TIMESTAMPTZ NOT NULL,
+        ended_at TIMESTAMPTZ,
+        duration_ms INTEGER,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT incidents_status_check CHECK (status IN ('recording', 'ready')),
+        CONSTRAINT incidents_replay_events_array CHECK (
+          JSONB_TYPEOF(replay_events) = 'array'
+        ),
+        CONSTRAINT incidents_client_details_object CHECK (
+          client_details IS NULL OR JSONB_TYPEOF(client_details) = 'object'
+        )
+      )
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS incidents_app_status_created_idx
+      ON public.incidents (app, status, created_at DESC)
+    `);
+
     await client.query("COMMIT");
     console.log("Logs table is ready");
   } catch (error) {

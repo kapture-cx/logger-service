@@ -33,11 +33,59 @@ function createStorage() {
 }
 
 function createBrowserContext() {
+  const elements = [];
   const intervals = [];
   const listeners = new Map();
   const requests = [];
+  const scripts = [];
   const timeouts = [];
   let nextId = 0;
+
+  function createElement(tagName) {
+    const elementListeners = new Map();
+    const element = {
+      tagName: tagName.toUpperCase(),
+      dataset: {},
+      disabled: false,
+      style: {},
+      value: "",
+      textContent: "",
+      classList: { add() {}, remove() {} },
+      addEventListener(type, callback) {
+        const callbacks = elementListeners.get(type) || [];
+        callbacks.push(callback);
+        elementListeners.set(type, callbacks);
+      },
+      click() {
+        return Promise.all(
+          (elementListeners.get("click") || []).map((callback) => callback()),
+        );
+      },
+      submit() {
+        return Promise.all(
+          (elementListeners.get("submit") || []).map((callback) =>
+            callback({ preventDefault() {} }),
+          ),
+        );
+      },
+      attachShadow() {
+        const nodes = new Map();
+        this.shadowRoot = {
+          innerHTML: "",
+          getElementById(id) {
+            if (!nodes.has(id)) {
+              nodes.set(id, createElement(id === "details" ? "form" : "button"));
+            }
+            return nodes.get(id);
+          },
+        };
+        return this.shadowRoot;
+      },
+    };
+
+    elements.push(element);
+    return element;
+  }
 
   const browser = {
     ArrayBuffer,
@@ -65,6 +113,9 @@ function createBrowserContext() {
       },
     },
     document: {
+      body: {
+        appendChild() {},
+      },
       currentScript: {
         src: "https://logger.example.com/monitoring/v1/monitoring.min.js",
         dataset: {
@@ -72,6 +123,14 @@ function createBrowserContext() {
         },
       },
       hidden: false,
+      head: {
+        appendChild(element) {
+          if (element.tagName === "SCRIPT") {
+            scripts.push(element);
+          }
+        },
+      },
+      createElement,
       addEventListener(type, callback) {
         const callbacks = listeners.get(type) || new Set();
         callbacks.add(callback);
@@ -85,9 +144,12 @@ function createBrowserContext() {
         status: 200,
         statusText: "OK",
         headers: new Headers({ "content-type": "application/json" }),
-        clone() {
-          return { text: async () => '{"ok":true}' };
-        },
+      clone() {
+        return { text: async () => '{"ok":true}' };
+      },
+      json: async () => ({
+        data: { id: "123e4567-e89b-42d3-a456-426614174000" },
+      }),
       };
     },
     location: { href: "https://crm.example.com/nui/" },
@@ -96,15 +158,18 @@ function createBrowserContext() {
       replaceState() {},
     },
     localStorage: createStorage(),
+    confirm: () => true,
     performance: { now: () => 1 },
     setInterval(callback) {
       intervals.push(callback);
       return intervals.length;
     },
+    clearInterval() {},
     setTimeout(callback, delay) {
       timeouts.push({ callback, delay });
       return timeouts.length;
     },
+    clearTimeout() {},
     addEventListener(type, callback) {
       const callbacks = listeners.get(type) || new Set();
       callbacks.add(callback);
@@ -121,7 +186,7 @@ function createBrowserContext() {
   browser.window = browser;
   browser.globalThis = browser;
 
-  return { browser, intervals, requests, timeouts };
+  return { browser, elements, intervals, requests, scripts, timeouts };
 }
 
 function createFakeWebSocket() {
@@ -227,6 +292,91 @@ test("the browser SDK derives its endpoint and reads current client details", as
     userId: "456",
     tenantId: "acme",
   });
+});
+
+test("the incident recorder widget is opt-in and lazily loads its bundle", async () => {
+  const bundle = await readFile(bundlePath, "utf8");
+  const disabled = createBrowserContext();
+
+  vm.runInContext(bundle, vm.createContext(disabled.browser));
+  assert.equal(
+    disabled.elements.filter((element) => element.dataset.kaptureRecorder).length,
+    0,
+  );
+
+  const enabled = createBrowserContext();
+  enabled.browser.document.currentScript.dataset.incidentRecorder = "true";
+  const context = vm.createContext(enabled.browser);
+
+  vm.runInContext(bundle, context);
+
+  const hosts = enabled.elements.filter(
+    (element) => element.dataset.kaptureRecorder,
+  );
+  assert.equal(hosts.length, 1);
+  assert.equal(enabled.scripts.length, 0);
+
+  hosts[0].shadowRoot.getElementById("record").click();
+  assert.equal(enabled.scripts.length, 1);
+  assert.equal(
+    enabled.scripts[0].src,
+    "https://logger.example.com/monitoring/v1/incident-recorder.min.js",
+  );
+
+  vm.runInContext(bundle, context);
+  assert.equal(
+    enabled.elements.filter((element) => element.dataset.kaptureRecorder).length,
+    1,
+  );
+});
+
+test("the incident recorder correlates, uploads, stops, and completes", async () => {
+  const bundle = await readFile(bundlePath, "utf8");
+  const { browser, elements, intervals, requests, timeouts } =
+    createBrowserContext();
+  browser.document.currentScript.dataset.incidentRecorder = "true";
+  let recorderOptions;
+  let recorderStopped = false;
+  browser.__KaptureIncidentRecorder = {
+    record(options) {
+      recorderOptions = options;
+      return () => {
+        recorderStopped = true;
+      };
+    },
+  };
+
+  vm.runInContext(bundle, vm.createContext(browser));
+
+  const host = elements.find((element) => element.dataset.kaptureRecorder);
+  const recordButton = host.shadowRoot.getElementById("record");
+  await recordButton.click();
+
+  assert.equal(recordButton.textContent, "■ Stop recording");
+  assert.equal(requests[0].url, "https://logger.example.com/api/incidents");
+
+  recorderOptions.emit({ type: 2, timestamp: Date.now() });
+  await intervals[1]();
+
+  assert.equal(
+    requests[1].url,
+    "https://logger.example.com/api/incidents/123e4567-e89b-42d3-a456-426614174000/chunks",
+  );
+  assert.equal(JSON.parse(requests[1].options.body).sequence, 0);
+
+  const maximumDuration = timeouts.find(({ delay }) => delay === 300000);
+  maximumDuration.callback();
+  assert.equal(recorderStopped, true);
+  assert.equal(host.shadowRoot.getElementById("details").style.display, "block");
+
+  host.shadowRoot.getElementById("title").value = "Customer form failed";
+  await host.shadowRoot.getElementById("details").submit();
+
+  assert.equal(
+    requests.at(-1).url,
+    "https://logger.example.com/api/incidents/123e4567-e89b-42d3-a456-426614174000/complete",
+  );
+  assert.equal(recordButton.textContent, "● Record incident");
 });
 
 test("the browser SDK reports the final page transition during unload", async () => {

@@ -7,30 +7,29 @@ const projectRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
-const entryPoint = path.join(projectRoot, "monitoring-sdk/cdn-entry.js");
-const committedBundlePath = path.join(
-  projectRoot,
-  "public/monitoring/v1/monitoring.min.js",
-);
+for (const [entryFile, bundleFile] of [
+  ["cdn-entry.js", "monitoring.min.js"],
+  ["incident-recorder-entry.js", "incident-recorder.min.js"],
+]) {
+  const [buildResult, committedBundle] = await Promise.all([
+    build({
+      entryPoints: [path.join(projectRoot, "monitoring-sdk", entryFile)],
+      bundle: true,
+      minify: true,
+      format: "iife",
+      write: false,
+    }),
+    readFile(path.join(projectRoot, "public/monitoring/v1", bundleFile)),
+  ]);
 
-const [buildResult, committedBundle] = await Promise.all([
-  build({
-    entryPoints: [entryPoint],
-    bundle: true,
-    minify: true,
-    format: "iife",
-    write: false,
-  }),
-  readFile(committedBundlePath),
-]);
-
-if (
-  buildResult.outputFiles.length !== 1 ||
-  !Buffer.from(buildResult.outputFiles[0].contents).equals(committedBundle)
-) {
-  throw new Error(
-    "The committed v1 monitoring bundle is stale. Run npm run build:monitoring.",
-  );
+  if (
+    buildResult.outputFiles.length !== 1 ||
+    !Buffer.from(buildResult.outputFiles[0].contents).equals(committedBundle)
+  ) {
+    throw new Error(
+      `The committed ${bundleFile} bundle is stale. Run npm run build:monitoring.`,
+    );
+  }
 }
 
 console.log("The committed v1 monitoring bundle matches its source.");

@@ -38,6 +38,61 @@ omitted, the SDK derives `/api/logs` from the script URL:
 ></script>
 ```
 
+## Record a QA incident
+
+Add `data-incident-recorder="true"` to opt into the QA/staging incident
+recorder:
+
+```html
+<script
+  src="http://localhost:5001/monitoring/v1/monitoring.min.js"
+  data-app="kapturecrm-ui"
+  data-endpoint="http://localhost:5001/api/logs"
+  data-incident-recorder="true"
+></script>
+```
+
+The SDK adds a small **Record incident** button. The rrweb recorder is not
+downloaded until that button is clicked. While recording, DOM changes are sent
+to `/api/incidents` every five seconds and normal monitoring events receive the
+same `incidentId` plus an `incidentOffsetMs` value. Recording stops automatically
+after five minutes. The QA then supplies a required title and optional expected
+and actual behavior before submitting.
+
+This hackathon recorder intentionally captures all page text and input values,
+including passwords. Enable it only on QA/staging pages containing synthetic
+data. It is not suitable for real customer or production data without masking,
+authentication, tenant authorization, and retention controls.
+
+The dashboard can retrieve a submitted incident with:
+
+```text
+GET /api/incidents/{incidentId}
+```
+
+The response contains incident metadata, ordered rrweb `replayEvents`, and the
+correlated technical `logs`. Dashboard playback is intentionally implemented in
+the separate UI project.
+
+To discover completed incidents before selecting one, request lightweight
+summaries by application:
+
+```text
+GET /api/incidents?app=kapturecrm-ui&cmId=8400
+```
+
+`app` is required. The endpoint returns the newest 50 completed (`ready`)
+incidents. `cmId` is
+optional and filters against `clientDetails.cmId`. The list response excludes
+replay events and correlated logs; use the
+UUID detail endpoint above to load those after an incident is selected. No
+matches return status `200` with an empty `data` array.
+
+Incomplete recordings are cleaned up automatically. The service runs cleanup at
+startup and every 15 minutes, permanently deleting incidents that remain in
+`recording` status without a successful chunk update for 30 minutes. Completed
+`ready` incidents are never removed by this cleanup.
+
 `data-websocket-end-point` is optional and is the only way to enable the SDK's
 live WebSocket connection. It must be a complete `ws://` or `wss://` URL; the
 SDK never derives it from the HTTP endpoint. When it is omitted or invalid,
@@ -250,7 +305,7 @@ return the created row:
 ```
 
 The submitted data is also printed to the server console. The application does
-not impose a request-body or array-length limit.
+not impose a JSON request-body or replay-chunk size limit.
 
 ## Filter events
 

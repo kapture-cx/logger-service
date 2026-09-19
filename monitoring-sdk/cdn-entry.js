@@ -135,6 +135,9 @@ function exposePublicApi(status) {
 
 const script = document.currentScript
 const clientConfig = readClientConfig()
+const recorderScriptUrl = script?.src
+    ? new URL("incident-recorder.min.js", script.src).href
+    : undefined
 
 exposeSessionIdentityApi()
 
@@ -143,6 +146,8 @@ const status = Object.freeze(MonitoringService.start({
     websocketEndPoint: normalizeWebSocketEndPoint(script?.dataset.websocketEndPoint),
     app: normalizeString(script?.dataset.app) || clientConfig.app,
     getClientDetails: clientConfig.getClientDetails,
+    incidentRecorder: script?.dataset.incidentRecorder === "true",
+    recorderScriptUrl,
 }))
 
 exposePublicApi(status)

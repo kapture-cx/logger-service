@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import pool from "../config/db.js";
 
 const ISO_DATE_TIME_WITH_TIMEZONE =
@@ -198,4 +199,251 @@ export const getLogsByFilters = async (payload) => {
   );
 
   return mapExpandedEvents(result.rows);
+};
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function validateIncidentId(id) {
+  if (typeof id !== "string" || !UUID_PATTERN.test(id)) {
+    throw new TypeError("incident id must be a valid UUID");
+  }
+
+  return id;
+}
+
+export const createIncident = async ({
+  app,
+  startedAt,
+  sessionId,
+  tabId,
+  pageViewId,
+  clientDetails,
+} = {}) => {
+  const id = randomUUID();
+  const validatedApp = validateApp(app);
+  const validatedStartedAt = validateDateTime(startedAt, "startedAt");
+  const validatedClientDetails = validateClientDetails(clientDetails);
+  const result = await pool.query(
+    `INSERT INTO public.incidents (
+       id, app, session_id, tab_id, page_view_id, client_details, started_at
+     ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+     RETURNING id, app, status, started_at AS "startedAt", created_at AS "createdAt"`,
+    [
+      id,
+      validatedApp,
+      sessionId || null,
+      tabId || null,
+      pageViewId || null,
+      validatedClientDetails === null
+        ? null
+        : JSON.stringify(validatedClientDetails),
+      validatedStartedAt.toISOString(),
+    ],
+  );
+
+  return result.rows[0];
+};
+
+export const appendIncidentChunk = async (id, { sequence, events } = {}) => {
+  const validatedId = validateIncidentId(id);
+
+  if (!Number.isInteger(sequence) || sequence < 0) {
+    throw new TypeError("sequence must be a non-negative integer");
+  }
+
+  if (!Array.isArray(events) || events.length === 0) {
+    throw new TypeError("events must be a non-empty array");
+  }
+
+  if (
+    events.some(
+      (event) => !event || typeof event !== "object" || Array.isArray(event),
+    )
+  ) {
+    throw new TypeError("each replay event must be a JSON object");
+  }
+
+  const serializedEvents = JSON.stringify(events);
+
+  const result = await pool.query(
+    `UPDATE public.incidents
+     SET replay_events = CASE
+           WHEN $2 = last_sequence + 1 THEN replay_events || $3::jsonb
+           ELSE replay_events
+         END,
+         last_sequence = GREATEST(last_sequence, $2),
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = $1
+       AND status = 'recording'
+       AND $2 <= last_sequence + 1
+     RETURNING id, last_sequence AS "lastSequence"`,
+    [validatedId, sequence, serializedEvents],
+  );
+
+  if (result.rows[0]) {
+    return result.rows[0];
+  }
+
+  const incident = await pool.query(
+    "SELECT status, last_sequence FROM public.incidents WHERE id = $1",
+    [validatedId],
+  );
+
+  if (!incident.rows[0]) {
+    const error = new Error("Incident not found");
+    error.status = 404;
+    throw error;
+  }
+
+  const error = new Error(
+    incident.rows[0].status !== "recording"
+      ? "Incident is already complete"
+      : `Expected sequence ${incident.rows[0].last_sequence + 1}`,
+  );
+  error.status = 409;
+  throw error;
+};
+
+export const completeIncident = async (
+  id,
+  { title, expectedBehavior, actualBehavior, endedAt, durationMs } = {},
+) => {
+  const validatedId = validateIncidentId(id);
+
+  if (typeof title !== "string" || !title.trim()) {
+    throw new TypeError("title must be a non-empty string");
+  }
+
+  const validatedEndedAt = validateDateTime(endedAt, "endedAt");
+
+  if (!Number.isInteger(durationMs) || durationMs < 0 || durationMs > 300000) {
+    throw new TypeError("durationMs must be an integer between 0 and 300000");
+  }
+
+  const result = await pool.query(
+    `UPDATE public.incidents
+     SET status = 'ready',
+         title = $2,
+         expected_behavior = $3,
+         actual_behavior = $4,
+         ended_at = $5,
+         duration_ms = $6,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = $1
+       AND status = 'recording'
+       AND JSONB_ARRAY_LENGTH(replay_events) > 0
+     RETURNING id, app, status, title,
+       expected_behavior AS "expectedBehavior",
+       actual_behavior AS "actualBehavior",
+       started_at AS "startedAt", ended_at AS "endedAt",
+       duration_ms AS "durationMs", created_at AS "createdAt"`,
+    [
+      validatedId,
+      title.trim(),
+      typeof expectedBehavior === "string" ? expectedBehavior.trim() || null : null,
+      typeof actualBehavior === "string" ? actualBehavior.trim() || null : null,
+      validatedEndedAt.toISOString(),
+      durationMs,
+    ],
+  );
+
+  if (!result.rows[0]) {
+    const error = new Error("Recording incident was not found or has no replay events");
+    error.status = 409;
+    throw error;
+  }
+
+  return result.rows[0];
+};
+
+export const deleteIncident = async (id) => {
+  const result = await pool.query(
+    "DELETE FROM public.incidents WHERE id = $1 RETURNING id",
+    [validateIncidentId(id)],
+  );
+
+  if (!result.rows[0]) {
+    const error = new Error("Incident not found");
+    error.status = 404;
+    throw error;
+  }
+
+  return result.rows[0];
+};
+
+export const deleteAbandonedIncidents = async () => {
+  const result = await pool.query(
+    `DELETE FROM public.incidents
+     WHERE status = 'recording'
+       AND updated_at < CURRENT_TIMESTAMP - INTERVAL '30 minutes'`,
+  );
+
+  return result.rowCount || 0;
+};
+
+export const getIncidents = async ({ app, cmId } = {}) => {
+  const validatedApp = validateApp(app);
+  const validatedCmId = validateOptionalFilter(cmId, "cmId");
+  const values = [validatedApp];
+  const cmIdCondition = validatedCmId === null
+    ? ""
+    : `\n       AND client_details->>'cmId' = $${values.push(validatedCmId)}`;
+
+  const result = await pool.query(
+    `SELECT id, app, status, title,
+       client_details AS "clientDetails",
+       started_at AS "startedAt", ended_at AS "endedAt",
+       duration_ms AS "durationMs", created_at AS "createdAt",
+       updated_at AS "updatedAt"
+     FROM public.incidents
+     WHERE app = $1
+       AND status = 'ready'${cmIdCondition}
+     ORDER BY created_at DESC
+     LIMIT 50`,
+    values,
+  );
+
+  return result.rows;
+};
+
+export const getIncident = async (id) => {
+  const validatedId = validateIncidentId(id);
+  const [incidentResult, logsResult] = await Promise.all([
+    pool.query(
+      `SELECT id, app, status, title,
+         expected_behavior AS "expectedBehavior",
+         actual_behavior AS "actualBehavior",
+         session_id AS "sessionId", tab_id AS "tabId",
+         page_view_id AS "pageViewId", client_details AS "clientDetails",
+         replay_events AS "replayEvents", last_sequence AS "lastSequence",
+         started_at AS "startedAt", ended_at AS "endedAt",
+         duration_ms AS "durationMs", created_at AS "createdAt",
+         updated_at AS "updatedAt"
+       FROM public.incidents
+       WHERE id = $1`,
+      [validatedId],
+    ),
+    pool.query(
+      `SELECT expanded.event, log.app, log.client_details
+       FROM public.logs AS log
+       CROSS JOIN LATERAL JSONB_ARRAY_ELEMENTS(log.events)
+         WITH ORDINALITY AS expanded(event, event_order)
+       WHERE expanded.event->>'incidentId' = $1
+       ORDER BY expanded.event->>'timestamp' ASC NULLS LAST,
+         log.created_at ASC, expanded.event_order ASC`,
+      [validatedId],
+    ),
+  ]);
+
+  if (!incidentResult.rows[0]) {
+    const error = new Error("Incident not found");
+    error.status = 404;
+    throw error;
+  }
+
+  return {
+    ...incidentResult.rows[0],
+    logs: mapExpandedEvents(logsResult.rows),
+  };
 };

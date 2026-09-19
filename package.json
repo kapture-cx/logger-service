@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "build:monitoring": "esbuild monitoring-sdk/cdn-entry.js --bundle --minify --format=iife --outfile=public/monitoring/v1/monitoring.min.js",
+    "build:monitoring": "esbuild monitoring-sdk/cdn-entry.js --bundle --minify --format=iife --outfile=public/monitoring/v1/monitoring.min.js && esbuild monitoring-sdk/incident-recorder-entry.js --bundle --minify --format=iife --outfile=public/monitoring/v1/incident-recorder.min.js",
     "check:monitoring": "node scripts/check-monitoring-bundle.js",
     "test": "npm run check:monitoring && node --test"
   },
@@ -15,6 +15,7 @@
     "node": ">=18"
   },
   "dependencies": {
+    "@rrweb/record": "^2.1.6",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.1.0",

@@ -1,7 +1,16 @@
-import { getPageViewId, getSessionId, getTabId } from "./Identity";
-import { sendLiveEvent } from "./LiveMonitor";
+import { getPageViewId, getSessionId, getTabId } from "./Identity.js";
+import { sendLiveEvent } from "./LiveMonitor.js";
 
 const queue = [];
+let activeIncident;
+
+export function setActiveIncident(incident) {
+  activeIncident = incident;
+}
+
+export function clearActiveIncident() {
+  activeIncident = undefined;
+}
 
 export function addEvent(event) {
   const enrichedEvent = {
@@ -9,6 +18,10 @@ export function addEvent(event) {
     ...event,
     tabId: getTabId(),
     pageViewId: getPageViewId(),
+    ...(activeIncident && {
+      incidentId: activeIncident.incidentId,
+      incidentOffsetMs: Math.max(0, Date.now() - activeIncident.startedAtMs),
+    }),
   };
 
   queue.push(enrichedEvent);

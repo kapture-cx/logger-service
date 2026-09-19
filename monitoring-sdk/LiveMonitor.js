@@ -1,4 +1,4 @@
-import { getTabId } from "./Identity";
+import { getTabId } from "./Identity.js";
 
 const INITIAL_RECONNECT_DELAY = 1000;
 const MAX_RECONNECT_DELAY = 30000;

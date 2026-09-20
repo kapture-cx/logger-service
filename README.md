@@ -93,7 +93,7 @@ startup and every 15 minutes, permanently deleting incidents that remain in
 `recording` status without a successful chunk update for 30 minutes. Completed
 `ready` incidents are never removed by this cleanup.
 
-## Investigate a completed incident with AI
+## Investigate a completed monitoring session with AI
 
 Configure the server-side Claude credentials. Never expose this API key in the
 browser or dashboard:
@@ -133,10 +133,28 @@ assigns temporary evidence IDs such as `E1`, limits the context sent to Claude,
 and returns a grounded explanation with evidence and next steps. rrweb replay
 events are never sent to Claude. Questions and answers are not stored.
 
-The API contract is source-neutral, but only `sourceType: "incident"` is
-currently accepted. An ended live-monitoring session can later be converted to
-the same internal evidence structure without changing the Claude integration or
-dashboard answer format. The current WebSocket protocol is unchanged.
+The same endpoints accept `sourceType: "live-session"` after the dashboard
+saves the newest 300 events from an ended live-monitoring session:
+
+```http
+POST /api/live-sessions
+Content-Type: application/json
+
+{
+  "clientKey": "democrm",
+  "userId": "120040",
+  "agent": "Ankit Tiwari",
+  "applications": ["kapturecrm-ui"],
+  "startedAt": "2026-09-20T10:00:00.000Z",
+  "endedAt": "2026-09-20T10:05:00.000Z",
+  "events": [{ "type": "user-click", "label": "Create Customer" }]
+}
+```
+
+The returned live-session UUID is used as `sourceId` for questions and answers.
+The Claude integration receives the same generic evidence structure for both
+source types. The WebSocket protocol is unchanged, and AI investigation becomes
+available only after the dashboard explicitly stops and saves the session.
 
 ## Semantic click monitoring
 

@@ -103,6 +103,30 @@ ANTHROPIC_API_KEY=your-key
 ANTHROPIC_MODEL=claude-opus-5
 ```
 
+## Automatic detections and Gmail alerts
+
+The service scans log batches from the latest five minutes once per minute. It
+creates deduplicated cards for API failure bursts, repeated JavaScript or
+promise errors, slow API endpoints, and repeated console errors. Retrieve cards
+for one exact application and customer with:
+
+```http
+GET /api/detections?app=kapturecrm-ui&cmId=8400
+```
+
+High and critical detections can be emailed through Gmail SMTP. Enable 2-Step
+Verification on the sender account, create a Google App Password, and configure:
+
+```env
+GMAIL_USER=monitoring-alerts@gmail.com
+GMAIL_APP_PASSWORD=your-16-digit-app-password
+ALERT_EMAIL_RECIPIENTS=qa@example.com,admin@example.com
+```
+
+If these variables are absent, detection cards continue working without email.
+Email failures are retried by later matching scans and never interrupt log
+collection. Medium-severity slow API detections are dashboard-only.
+
 Generate ten suggested questions after opening the AI Investigator panel:
 
 ```http

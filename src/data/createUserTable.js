@@ -62,6 +62,54 @@ const createLogsTable = async () => {
     `);
 
     await client.query(`
+      CREATE INDEX IF NOT EXISTS logs_created_at_idx
+      ON public.logs (created_at DESC)
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.detections (
+        id UUID PRIMARY KEY,
+        app TEXT NOT NULL,
+        cm_id TEXT NOT NULL,
+        customer_name TEXT,
+        fingerprint TEXT NOT NULL,
+        type TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        title TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        occurrence_count INTEGER NOT NULL,
+        affected_sessions INTEGER NOT NULL DEFAULT 0,
+        evidence JSONB NOT NULL DEFAULT '[]'::jsonb,
+        first_seen_at TIMESTAMPTZ NOT NULL,
+        last_seen_at TIMESTAMPTZ NOT NULL,
+        email_sent_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT detections_severity_check CHECK (
+          severity IN ('medium', 'high', 'critical')
+        ),
+        CONSTRAINT detections_evidence_array CHECK (
+          JSONB_TYPEOF(evidence) = 'array'
+        )
+      )
+    `);
+
+    await client.query(`
+      ALTER TABLE public.detections
+      ADD COLUMN IF NOT EXISTS customer_name TEXT
+    `);
+
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS detections_identity_idx
+      ON public.detections (app, cm_id, fingerprint)
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS detections_customer_last_seen_idx
+      ON public.detections (app, cm_id, last_seen_at DESC)
+    `);
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS public.incidents (
         id UUID PRIMARY KEY,
         app TEXT NOT NULL,

@@ -201,6 +201,104 @@ export const getLogsByFilters = async (payload) => {
   return mapExpandedEvents(result.rows);
 };
 
+export const getRecentDetectionEvents = async () => {
+  const result = await pool.query(
+    `SELECT expanded.event, log.app, log.client_details
+     FROM public.logs AS log
+     CROSS JOIN LATERAL JSONB_ARRAY_ELEMENTS(log.events)
+       WITH ORDINALITY AS expanded(event, event_order)
+     WHERE log.created_at >= CURRENT_TIMESTAMP - INTERVAL '5 minutes'
+       AND NULLIF(BTRIM(log.client_details->>'cmId'), '') IS NOT NULL
+     ORDER BY log.created_at ASC, log.id ASC, expanded.event_order ASC`,
+  );
+
+  return mapExpandedEvents(result.rows);
+};
+
+export const upsertDetection = async (detection) => {
+  const result = await pool.query(
+    `INSERT INTO public.detections (
+       id, app, cm_id, customer_name, fingerprint, type, severity, title, summary,
+       occurrence_count, affected_sessions, evidence, first_seen_at, last_seen_at
+     ) VALUES (
+       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14
+     )
+     ON CONFLICT (app, cm_id, fingerprint) DO UPDATE SET
+       customer_name = EXCLUDED.customer_name,
+       severity = EXCLUDED.severity,
+       title = EXCLUDED.title,
+       summary = EXCLUDED.summary,
+       occurrence_count = EXCLUDED.occurrence_count,
+       affected_sessions = EXCLUDED.affected_sessions,
+       evidence = EXCLUDED.evidence,
+       first_seen_at = LEAST(detections.first_seen_at, EXCLUDED.first_seen_at),
+       last_seen_at = GREATEST(detections.last_seen_at, EXCLUDED.last_seen_at),
+       updated_at = CURRENT_TIMESTAMP
+     RETURNING id, app, cm_id AS "cmId", customer_name AS "customerName",
+       fingerprint, type, severity,
+       title, summary, occurrence_count AS "occurrenceCount",
+       affected_sessions AS "affectedSessions", evidence,
+       first_seen_at AS "firstSeenAt", last_seen_at AS "lastSeenAt",
+       email_sent_at AS "emailSentAt", created_at AS "createdAt",
+       updated_at AS "updatedAt"`,
+    [
+      randomUUID(),
+      detection.app,
+      detection.cmId,
+      detection.customerName,
+      detection.fingerprint,
+      detection.type,
+      detection.severity,
+      detection.title,
+      detection.summary,
+      detection.occurrenceCount,
+      detection.affectedSessions,
+      JSON.stringify(detection.evidence),
+      detection.firstSeenAt,
+      detection.lastSeenAt,
+    ],
+  );
+
+  return result.rows[0];
+};
+
+export const markDetectionEmailed = async (id) => {
+  await pool.query(
+    `UPDATE public.detections
+     SET email_sent_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+     WHERE id = $1`,
+    [id],
+  );
+};
+
+export const getDetections = async ({ app, cmId } = {}) => {
+  const validatedApp = validateApp(app);
+
+  if (typeof cmId !== "string" || !cmId.trim()) {
+    throw new TypeError("cmId must be a non-empty string");
+  }
+
+  const result = await pool.query(
+    `SELECT id, app, cm_id AS "cmId", customer_name AS "customerName",
+       type, severity, title, summary,
+       occurrence_count AS "occurrenceCount",
+       affected_sessions AS "affectedSessions", evidence,
+       first_seen_at AS "firstSeenAt", last_seen_at AS "lastSeenAt",
+       email_sent_at AS "emailSentAt", created_at AS "createdAt",
+       updated_at AS "updatedAt", COUNT(*) OVER() AS total
+     FROM public.detections
+     WHERE app = $1 AND cm_id = $2
+     ORDER BY last_seen_at DESC
+     LIMIT 100`,
+    [validatedApp, cmId.trim()],
+  );
+
+  return {
+    total: result.rows.length ? Number(result.rows[0].total) : 0,
+    detections: result.rows.map(({ total: _total, ...detection }) => detection),
+  };
+};
+
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 

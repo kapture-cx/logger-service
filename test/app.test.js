@@ -174,6 +174,12 @@ test("validates incident discovery filters before accessing storage", async () =
 });
 
 test("validates live sessions and generic AI requests before accessing storage", async () => {
+  const detectionsResponse = await fetch(`${baseUrl}/api/detections`);
+  const detectionsBody = await detectionsResponse.json();
+
+  assert.equal(detectionsResponse.status, 400);
+  assert.equal(detectionsBody.message, "app must be a non-empty string");
+
   const listResponse = await fetch(`${baseUrl}/api/live-sessions`);
   const listBody = await listResponse.json();
 

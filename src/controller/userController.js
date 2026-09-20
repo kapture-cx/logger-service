@@ -6,6 +6,7 @@ import {
   createLiveSession as createLiveSessionModel,
   deleteIncident as deleteIncidentModel,
   getAllLogs,
+  getDetections as getDetectionsModel,
   getIncident as getIncidentModel,
   getIncidents as getIncidentsModel,
   getLiveSession as getLiveSessionModel,
@@ -69,6 +70,19 @@ export const fetchLogsByFilters = async (req, res, next) => {
     }
 
     return handleResponse(res, 200, "Events fetched successfully", events);
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export const fetchDetections = async (req, res, next) => {
+  try {
+    return handleResponse(
+      res,
+      200,
+      "Detections fetched successfully",
+      await getDetectionsModel(req.query),
+    );
   } catch (error) {
     return next(error);
   }

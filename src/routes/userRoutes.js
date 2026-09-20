@@ -5,6 +5,7 @@ import {
   askAiInvestigator,
   completeIncident,
   createIncident,
+  fetchDetections,
   fetchLiveSession,
   fetchLiveSessions,
   fetchIncident,
@@ -22,6 +23,7 @@ const router = express.Router();
 router.post("/logs", sanitizeLogs, addLogs);
 router.get(["/logs", "/fetch-logs"], fetchLogs);
 router.post("/logs/filter", fetchLogsByFilters);
+router.get("/detections", fetchDetections);
 router.post("/incidents", sanitizeLogs, createIncident);
 router.post("/incidents/:id/chunks", sanitizeLogs, addIncidentChunk);
 router.post("/incidents/:id/complete", sanitizeLogs, completeIncident);

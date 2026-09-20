@@ -574,7 +574,15 @@ async function requestClaude(evidence, instruction, schema, maxTokens, client) {
 export async function generateInvestigationQuestions(evidence, client) {
   const { output } = await requestClaude(
     evidence,
-    "Generate exactly 10 unique, concise questions that would help a developer or QA engineer investigate this session.",
+    `Generate exactly 10 unique, concise investigation questions grounded in the supplied evidence.
+
+Rank the most major and obvious problems first using these rules:
+1. critical: failed API requests with HTTP 5xx, network failures, timeouts, unhandled promise rejections, and JavaScript crashes;
+2. high: HTTP 4xx failures, validation or authorization failures, console errors, and the user action immediately preceding a failure;
+3. medium: warnings, suspicious sequences, repeated requests, and unusually slow requests;
+4. low: successful requests, navigation, and general behavior that is useful only after failures are understood.
+
+Order the questions from most important to least important. Within the same importance level, put a concrete failed API request before indirect symptoms or general behavior. Use actual endpoint paths, status codes, error messages, and clicked-control labels in questions whenever available. The first question must investigate the highest-confidence failure or causal chain. Do not produce generic questions when specific evidence exists.`,
     questionsSchema,
     800,
     client,

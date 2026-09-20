@@ -203,8 +203,19 @@ test("adds trustworthy session-relative times to AI-only evidence", () => {
   assert.equal(compacted[3].evidenceTime, "01:01:02");
 });
 
-test("generates exactly ten unique questions with structured output", async () => {
-  const questions = Array.from({ length: 10 }, (_, index) => `Question ${index + 1}?`);
+test("generates exactly ten unique questions with failure-first instructions", async () => {
+  const questions = [
+    "Why did POST /api/customers return HTTP 500?",
+    "Did the request time out?",
+    "Was the payload rejected?",
+    "Was the response malformed?",
+    "Was authorization invalid?",
+    "Was the request unusually slow?",
+    "Did this request repeat?",
+    "What happened during navigation?",
+    "Which page was active?",
+    "What successful action preceded it?",
+  ];
   let request;
   const client = {
     messages: {
@@ -215,14 +226,14 @@ test("generates exactly ten unique questions with structured output", async () =
     },
   };
 
-  assert.deepEqual(
-    await generateInvestigationQuestions(evidence, client),
-    questions,
-  );
+  assert.deepEqual(await generateInvestigationQuestions(evidence, client), questions);
   assert.equal(request.model, process.env.ANTHROPIC_MODEL || "claude-opus-5");
   assert.equal(request.max_tokens, 800);
   assert.equal(request.system[1].cache_control.ttl, "5m");
   assert.equal(request.output_config.format.type, "json_schema");
+  assert.match(request.messages[0].content, /HTTP 5xx/);
+  assert.match(request.messages[0].content, /highest-confidence failure/);
+  assert.match(request.messages[0].content, /failed API request before indirect symptoms/);
 });
 
 test("returns grounded answers and rejects unknown evidence references", async () => {

@@ -1,9 +1,16 @@
-import { getIncidentInvestigationEvidence } from "./models/useModel.js";
+import {
+  getIncidentInvestigationEvidence,
+  getLiveSessionInvestigationEvidence,
+} from "./models/useModel.js";
 
 export const loadInvestigationEvidence = ({ sourceType, sourceId } = {}) => {
-  if (sourceType !== "incident") {
-    throw new TypeError("Unsupported AI investigation source");
+  if (sourceType === "incident") {
+    return getIncidentInvestigationEvidence(sourceId);
   }
 
-  return getIncidentInvestigationEvidence(sourceId);
+  if (sourceType === "live-session") {
+    return getLiveSessionInvestigationEvidence(sourceId);
+  }
+
+  throw new TypeError("Unsupported AI investigation source");
 };

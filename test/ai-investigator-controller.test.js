@@ -4,6 +4,7 @@ import pool from "../src/config/db.js";
 import {
   askAiInvestigator,
   generateAiInvestigationQuestions,
+  saveLiveSession,
 } from "../src/controller/userController.js";
 
 const incidentId = "123e4567-e89b-42d3-a456-426614174000";
@@ -100,6 +101,79 @@ test("completed incidents work through both AI investigator controllers", async 
       answerResponse,
       (error) => { throw error; },
     );
+
+    assert.equal(answerResponse.statusCode, 200);
+    assert.equal(answerResponse.body.data.evidence[0].evidenceId, "E1");
+  } finally {
+    claudeFetch.mock.restore();
+    query.mock.restore();
+    if (previousApiKey === undefined) {
+      delete process.env.ANTHROPIC_API_KEY;
+    } else {
+      process.env.ANTHROPIC_API_KEY = previousApiKey;
+    }
+  }
+});
+
+test("completed live sessions save and work through both AI investigator controllers", async () => {
+  const previousApiKey = process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_API_KEY = "test-key";
+  const query = mock.method(pool, "query", async (sql, values) => {
+    if (sql.includes("INSERT INTO public.live_sessions")) {
+      return { rows: [{ id: values[0] }] };
+    }
+
+    return {
+      rows: [{
+        id: incidentId,
+        clientKey: "democrm",
+        userId: "120040",
+        agent: "Ankit Tiwari",
+        applications: ["kapturecrm-ui"],
+        events: [{ type: "api-request", statusCode: 500 }],
+      }],
+    };
+  });
+  const questions = Array.from({ length: 10 }, (_, index) => `Live question ${index + 1}?`);
+  let claudeFetch = mockClaudeFetch({ questions });
+
+  try {
+    const saveResponse = createResponse();
+    await saveLiveSession({
+      body: {
+        clientKey: "democrm",
+        userId: "120040",
+        events: [{ type: "api-request", statusCode: 500 }],
+        startedAt: "2026-09-20T10:00:00.000Z",
+        endedAt: "2026-09-20T10:01:00.000Z",
+      },
+    }, saveResponse, (error) => { throw error; });
+    assert.equal(saveResponse.statusCode, 201);
+    assert.match(saveResponse.body.data.id, /^[0-9a-f-]{36}$/i);
+
+    const questionResponse = createResponse();
+    await generateAiInvestigationQuestions(
+      { body: { sourceType: "live-session", sourceId: incidentId } },
+      questionResponse,
+      (error) => { throw error; },
+    );
+    assert.deepEqual(questionResponse.body.data.questions, questions);
+
+    claudeFetch.mock.restore();
+    claudeFetch = mockClaudeFetch({
+      answer: "The live request failed.",
+      likelyCause: "The backend returned HTTP 500.",
+      evidence: [{ evidenceId: "E1", summary: "The request returned 500." }],
+      nextSteps: ["Inspect the backend trace."],
+    });
+    const answerResponse = createResponse();
+    await askAiInvestigator({
+      body: {
+        sourceType: "live-session",
+        sourceId: incidentId,
+        question: "Why did it fail?",
+      },
+    }, answerResponse, (error) => { throw error; });
 
     assert.equal(answerResponse.statusCode, 200);
     assert.equal(answerResponse.body.data.evidence[0].evidenceId, "E1");

@@ -11,6 +11,7 @@ import {
   fetchLogsByFilters,
   generateAiInvestigationQuestions,
   removeIncident,
+  saveLiveSession,
 } from "../controller/userController.js";
 import sanitizeLogs from "../middlewares/sanitizeLogs.js";
 
@@ -25,6 +26,7 @@ router.post("/incidents/:id/complete", completeIncident);
 router.delete("/incidents/:id", removeIncident);
 router.get("/incidents", fetchIncidents);
 router.get("/incidents/:id", fetchIncident);
+router.post("/live-sessions", saveLiveSession);
 router.post("/ai-investigator/questions", generateAiInvestigationQuestions);
 router.post("/ai-investigator/ask", askAiInvestigator);
 

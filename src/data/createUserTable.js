@@ -95,6 +95,32 @@ const createLogsTable = async () => {
       ON public.incidents (app, status, created_at DESC)
     `);
 
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.live_sessions (
+        id UUID PRIMARY KEY,
+        client_key TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        agent TEXT,
+        designation TEXT,
+        host TEXT,
+        applications JSONB NOT NULL DEFAULT '[]'::jsonb,
+        events JSONB NOT NULL,
+        started_at TIMESTAMPTZ NOT NULL,
+        ended_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT live_sessions_client_key_not_blank CHECK (BTRIM(client_key) <> ''),
+        CONSTRAINT live_sessions_user_id_not_blank CHECK (BTRIM(user_id) <> ''),
+        CONSTRAINT live_sessions_applications_array CHECK (
+          JSONB_TYPEOF(applications) = 'array'
+        ),
+        CONSTRAINT live_sessions_events_array CHECK (
+          JSONB_TYPEOF(events) = 'array'
+          AND JSONB_ARRAY_LENGTH(events) BETWEEN 1 AND 300
+        ),
+        CONSTRAINT live_sessions_time_order CHECK (ended_at >= started_at)
+      )
+    `);
+
     await client.query("COMMIT");
     console.log("Logs table is ready");
   } catch (error) {

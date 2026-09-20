@@ -147,7 +147,7 @@ test("requires server-side Anthropic configuration", async () => {
 
 test("rejects unsupported investigation sources before accessing storage", () => {
   assert.throws(
-    () => loadInvestigationEvidence({ sourceType: "live-session", sourceId: "x" }),
+    () => loadInvestigationEvidence({ sourceType: "unknown", sourceId: "x" }),
     /Unsupported AI investigation source/,
   );
 });

@@ -173,13 +173,23 @@ test("validates incident discovery filters before accessing storage", async () =
   assert.equal(invalidCmIdBody.message, "cmId must be a non-empty string");
 });
 
-test("validates generic AI investigator requests before accessing storage", async () => {
+test("validates live sessions and generic AI requests before accessing storage", async () => {
+  const liveSessionResponse = await fetch(`${baseUrl}/api/live-sessions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ clientKey: "democrm", userId: "120040", events: [] }),
+  });
+  const liveSessionBody = await liveSessionResponse.json();
+
+  assert.equal(liveSessionResponse.status, 400);
+  assert.equal(liveSessionBody.message, "events must contain between 1 and 300 items");
+
   const unsupportedResponse = await fetch(
     `${baseUrl}/api/ai-investigator/questions`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sourceType: "live-session", sourceId: "x" }),
+      body: JSON.stringify({ sourceType: "unknown", sourceId: "x" }),
     },
   );
   const unsupportedBody = await unsupportedResponse.json();

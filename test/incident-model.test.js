@@ -5,11 +5,13 @@ import {
   appendIncidentChunk,
   completeIncident,
   createIncident,
+  createLiveSession,
   deleteAbandonedIncidents,
   deleteIncident,
   getIncident,
   getIncidentInvestigationEvidence,
   getIncidents,
+  getLiveSessionInvestigationEvidence,
 } from "../src/models/useModel.js";
 
 const incidentId = "123e4567-e89b-42d3-a456-426614174000";
@@ -216,6 +218,113 @@ test("rejects incomplete incidents and ready incidents without logs for AI", asy
 
     await assert.rejects(
       getIncidentInvestigationEvidence(incidentId),
+      (error) => error.status === 422,
+    );
+  } finally {
+    query.mock.restore();
+  }
+});
+
+test("creates a completed live session while preserving event order", async () => {
+  const query = mock.method(pool, "query", async (_sql, values) => ({
+    rows: [{ id: values[0] }],
+  }));
+  const events = [
+    { type: "user-click", timestamp: "2026-09-20T10:00:01.000Z" },
+    { type: "api-request", timestamp: "2026-09-20T10:00:02.000Z" },
+  ];
+
+  try {
+    const session = await createLiveSession({
+      clientKey: "democrm",
+      userId: "120040",
+      agent: "Ankit Tiwari",
+      applications: ["kapturecrm-ui"],
+      events,
+      startedAt: "2026-09-20T10:00:00.000Z",
+      endedAt: "2026-09-20T10:01:00.000Z",
+    });
+    const values = query.mock.calls[0].arguments[1];
+
+    assert.match(session.id, /^[0-9a-f-]{36}$/i);
+    assert.deepEqual(JSON.parse(values[7]), events);
+  } finally {
+    query.mock.restore();
+  }
+});
+
+test("validates completed live sessions before querying", async () => {
+  const valid = {
+    clientKey: "democrm",
+    userId: "120040",
+    events: [{}],
+    startedAt: "2026-09-20T10:00:00.000Z",
+    endedAt: "2026-09-20T10:01:00.000Z",
+  };
+
+  await assert.rejects(createLiveSession({ ...valid, clientKey: " " }), /clientKey/);
+  await assert.rejects(createLiveSession({ ...valid, userId: " " }), /userId/);
+  await assert.rejects(createLiveSession({ ...valid, events: [] }), /between 1 and 300/);
+  await assert.rejects(
+    createLiveSession({ ...valid, events: Array.from({ length: 301 }, () => ({})) }),
+    /between 1 and 300/,
+  );
+  await assert.rejects(createLiveSession({ ...valid, events: ["invalid"] }), /JSON object/);
+  await assert.rejects(createLiveSession({ ...valid, startedAt: "invalid" }), /startedAt/);
+  await assert.rejects(
+    createLiveSession({
+      ...valid,
+      startedAt: "2026-09-20T10:02:00.000Z",
+      endedAt: "2026-09-20T10:01:00.000Z",
+    }),
+    /endedAt must be after or equal to startedAt/,
+  );
+});
+
+test("loads a completed live session as generic chronological AI evidence", async () => {
+  const query = mock.method(pool, "query", async () => ({
+    rows: [{
+      id: incidentId,
+      clientKey: "democrm",
+      userId: "120040",
+      agent: "Ankit Tiwari",
+      applications: ["kapturecrm-ui"],
+      startedAt: "2026-09-20T10:00:00.000Z",
+      endedAt: "2026-09-20T10:01:00.000Z",
+      events: [
+        { type: "user-click", label: "Save" },
+        { type: "api-request", statusCode: 500 },
+      ],
+    }],
+  }));
+
+  try {
+    const evidence = await getLiveSessionInvestigationEvidence(incidentId);
+
+    assert.equal(evidence.sourceType, "live-session");
+    assert.equal(evidence.title, "Live monitoring: Ankit Tiwari");
+    assert.equal(evidence.metadata.eventCount, 2);
+    assert.equal(evidence.events[0].evidenceId, "E1");
+    assert.equal(evidence.events[0].label, "Save");
+    assert.equal(evidence.events[1].evidenceId, "E2");
+  } finally {
+    query.mock.restore();
+  }
+});
+
+test("rejects missing or empty live sessions for AI investigation", async () => {
+  const query = mock.method(pool, "query", async () => ({ rows: [] }));
+
+  try {
+    await assert.rejects(
+      getLiveSessionInvestigationEvidence(incidentId),
+      (error) => error.status === 404,
+    );
+    query.mock.mockImplementation(async () => ({
+      rows: [{ id: incidentId, events: [] }],
+    }));
+    await assert.rejects(
+      getLiveSessionInvestigationEvidence(incidentId),
       (error) => error.status === 422,
     );
   } finally {

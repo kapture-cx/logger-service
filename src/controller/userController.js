@@ -3,6 +3,7 @@ import {
   appendIncidentChunk,
   completeIncident as completeIncidentModel,
   createIncident as createIncidentModel,
+  createLiveSession as createLiveSessionModel,
   deleteIncident as deleteIncidentModel,
   getAllLogs,
   getIncident as getIncidentModel,
@@ -143,6 +144,19 @@ export const fetchIncidents = async (req, res, next) => {
       200,
       "Incidents fetched successfully",
       await getIncidentsModel(req.query),
+    );
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export const saveLiveSession = async (req, res, next) => {
+  try {
+    return handleResponse(
+      res,
+      201,
+      "Live monitoring session saved successfully",
+      await createLiveSessionModel(req.body),
     );
   } catch (error) {
     return next(error);

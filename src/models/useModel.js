@@ -518,3 +518,120 @@ export const getIncidentInvestigationEvidence = async (id) => {
     })),
   };
 };
+
+export const createLiveSession = async ({
+  clientKey,
+  userId,
+  agent,
+  designation,
+  host,
+  applications = [],
+  events,
+  startedAt,
+  endedAt,
+} = {}) => {
+  if (typeof clientKey !== "string" || !clientKey.trim()) {
+    throw new TypeError("clientKey must be a non-empty string");
+  }
+
+  if (typeof userId !== "string" || !userId.trim()) {
+    throw new TypeError("userId must be a non-empty string");
+  }
+
+  if (
+    !Array.isArray(applications) ||
+    applications.some((application) =>
+      typeof application !== "string" || !application.trim()
+    )
+  ) {
+    throw new TypeError("applications must be an array of non-empty strings");
+  }
+
+  if (!Array.isArray(events) || events.length === 0 || events.length > 300) {
+    throw new TypeError("events must contain between 1 and 300 items");
+  }
+
+  if (events.some((event) =>
+    !event || typeof event !== "object" || Array.isArray(event)
+  )) {
+    throw new TypeError("each live session event must be a JSON object");
+  }
+
+  const validatedStartedAt = validateDateTime(startedAt, "startedAt");
+  const validatedEndedAt = validateDateTime(endedAt, "endedAt");
+
+  if (validatedEndedAt < validatedStartedAt) {
+    throw new TypeError("endedAt must be after or equal to startedAt");
+  }
+
+  const result = await pool.query(
+    `INSERT INTO public.live_sessions (
+       id, client_key, user_id, agent, designation, host, applications,
+       events, started_at, ended_at
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10)
+     RETURNING id`,
+    [
+      randomUUID(),
+      clientKey.trim(),
+      userId.trim(),
+      typeof agent === "string" ? agent.trim() || null : null,
+      typeof designation === "string" ? designation.trim() || null : null,
+      typeof host === "string" ? host.trim() || null : null,
+      JSON.stringify(applications.map((application) => application.trim())),
+      JSON.stringify(events),
+      validatedStartedAt.toISOString(),
+      validatedEndedAt.toISOString(),
+    ],
+  );
+
+  return result.rows[0];
+};
+
+export const getLiveSessionInvestigationEvidence = async (id) => {
+  if (typeof id !== "string" || !UUID_PATTERN.test(id)) {
+    throw new TypeError("live session id must be a valid UUID");
+  }
+
+  const result = await pool.query(
+    `SELECT id, client_key AS "clientKey", user_id AS "userId", agent,
+       designation, host, applications, events,
+       started_at AS "startedAt", ended_at AS "endedAt"
+     FROM public.live_sessions
+     WHERE id = $1`,
+    [id],
+  );
+  const session = result.rows[0];
+
+  if (!session) {
+    const error = new Error("Live monitoring session not found");
+    error.status = 404;
+    throw error;
+  }
+
+  if (!Array.isArray(session.events) || session.events.length === 0) {
+    const error = new Error("Live monitoring session has no evidence");
+    error.status = 422;
+    throw error;
+  }
+
+  return {
+    sourceType: "live-session",
+    sourceId: session.id,
+    title: `Live monitoring: ${session.agent || session.userId}`,
+    startedAt: session.startedAt,
+    endedAt: session.endedAt,
+    metadata: {
+      clientKey: session.clientKey,
+      userId: session.userId,
+      agent: session.agent,
+      designation: session.designation,
+      host: session.host,
+      applications: session.applications,
+      eventCount: session.events.length,
+    },
+    events: session.events.map((event, index) => ({
+      ...event,
+      evidenceId: `E${index + 1}`,
+    })),
+  };
+};

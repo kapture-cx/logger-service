@@ -142,6 +142,13 @@ error followed at `[E8]`. Observed facts are cited separately from the inferred
 likely cause, and next steps are tied to those concrete events rather than
 generic advice.
 
+To keep investigation latency predictable, the AI context is capped at 40,000
+characters and API payloads are compacted only in the temporary Claude input.
+Failed responses retain prioritized error fields and a larger preview, while
+successful responses retain counts, identifiers, and a small representative
+preview. Full captured request and response data remains unchanged in storage
+and in the dashboard's developer-facing event details.
+
 The same endpoints accept `sourceType: "live-session"` after the dashboard
 saves all events from an ended live-monitoring session:
 

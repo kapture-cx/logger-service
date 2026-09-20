@@ -24,6 +24,13 @@ const evidence = {
   ],
 };
 
+function getContextEvents(context) {
+  const contents = context
+    .split("<session_evidence>\n")[1]
+    .split("\n</session_evidence>")[0];
+  return contents ? contents.split("\n").map((event) => JSON.parse(event)) : [];
+}
+
 test("builds a bounded context that prioritizes failures and keeps chronology", () => {
   const events = Array.from({ length: 20 }, (_, index) => ({
     evidenceId: `E${index + 1}`,
@@ -37,11 +44,123 @@ test("builds a bounded context that prioritizes failures and keeps chronology", 
   }));
   const result = buildInvestigationContext({ ...evidence, events });
 
-  assert.ok(result.context.length <= 100000);
-  assert.match(result.context, /"evidenceId":"E19"/);
-  assert.match(result.context, /"evidenceId":"E20"/);
-  assert.match(result.context, /"evidenceId":"E15"/);
-  assert.ok(result.context.indexOf('"E19"') < result.context.indexOf('"E20"'));
+  assert.ok(result.context.length <= 40000);
+  assert.equal(result.evidenceIds.has("E19"), true);
+  assert.equal(result.evidenceIds.has("E20"), true);
+  assert.equal(result.evidenceIds.has("E15"), true);
+  assert.ok(result.context.indexOf("E19") < result.context.indexOf("E20"));
+});
+
+test("compacts failed API payloads without mutating diagnostic evidence", () => {
+  const responseData = {
+    records: Array.from({ length: 100 }, (_, index) => ({
+      id: index,
+      value: `record-${index}`,
+    })),
+    filler1: "x".repeat(200),
+    filler2: "x".repeat(200),
+    filler3: "x".repeat(200),
+    message: "Customer already exists",
+    errorCode: "DUPLICATE_CUSTOMER",
+    validationErrors: {
+      phone: "Phone number is already registered",
+      password: "must-never-reach-claude",
+    },
+    stack: "stack-line\n".repeat(200),
+    details: { first: { second: { third: { fourth: "too deep" } } } },
+    status: 422,
+  };
+  const event = {
+    evidenceId: "E1",
+    type: "api-request",
+    status: "error",
+    statusCode: 422,
+    method: "POST",
+    url: "/api/customers",
+    requestHeaders: {
+      "Content-Type": "application/json",
+      Authorization: "Bearer private",
+      "X-Unrelated": "discard me",
+    },
+    requestData: {
+      email: "person@example.com",
+      password: "private-password",
+    },
+    responseData,
+  };
+  const original = structuredClone(event);
+  const result = buildInvestigationContext({ ...evidence, events: [event] });
+  const [compacted] = getContextEvents(result.context);
+
+  assert.deepEqual(event, original);
+  assert.equal(compacted.responseData.message, "Customer already exists");
+  assert.equal(compacted.responseData.errorCode, "DUPLICATE_CUSTOMER");
+  assert.equal(
+    compacted.responseData.validationErrors.phone,
+    "Phone number is already registered",
+  );
+  assert.equal(
+    compacted.responseData.validationErrors.password,
+    "[REDACTED]",
+  );
+  assert.match(compacted.responseData.stack, /\.\.\.\[truncated\]$/);
+  assert.equal(
+    compacted.responseData.details.first.second.third._truncated,
+    true,
+  );
+  assert.equal(compacted.requestData.password, "[REDACTED]");
+  assert.equal(compacted.requestHeaders.Authorization, "[REDACTED]");
+  assert.equal(compacted.requestHeaders["X-Unrelated"], undefined);
+  assert.equal(compacted.responseData.records._type, "array");
+  assert.equal(compacted.responseData.records._length, 100);
+  assert.equal(compacted.responseData.records._items.length, 3);
+  assert.equal(compacted.responseDataCompaction.truncated, true);
+  assert.equal(
+    compacted.responseDataCompaction.originalCharacterCount,
+    JSON.stringify(responseData).length,
+  );
+  assert.ok(result.context.split("\n").every((line) => line.length <= 4000));
+});
+
+test("summarizes successful responses more aggressively for AI", () => {
+  const event = {
+    evidenceId: "E1",
+    type: "api-request",
+    status: "success",
+    statusCode: 200,
+    responseData: {
+      success: true,
+      total: 5000,
+      customers: Array.from({ length: 5000 }, (_, index) => ({
+        id: index,
+        name: `Customer ${index}`,
+      })),
+    },
+  };
+  const result = buildInvestigationContext({ ...evidence, events: [event] });
+  const [compacted] = getContextEvents(result.context);
+
+  assert.equal(compacted.responseData.success, true);
+  assert.equal(compacted.responseData.total, 5000);
+  assert.equal(compacted.responseData.customers._type, "array");
+  assert.equal(compacted.responseData.customers._length, 5000);
+  assert.equal(compacted.responseData.customers._items.length, 1);
+  assert.equal(compacted.responseDataCompaction.truncated, true);
+});
+
+test("keeps small primitive and null response payloads understandable", () => {
+  const result = buildInvestigationContext({
+    ...evidence,
+    events: [
+      { evidenceId: "E1", type: "api-request", status: "success", responseData: "ok" },
+      { evidenceId: "E2", type: "api-request", status: "error", responseData: null },
+    ],
+  });
+  const compacted = getContextEvents(result.context);
+
+  assert.equal(compacted[0].responseData, "ok");
+  assert.equal(compacted[0].responseDataCompaction, undefined);
+  assert.equal(compacted[1].responseData, null);
 });
 
 test("adds trustworthy session-relative times to AI-only evidence", () => {
@@ -74,10 +193,14 @@ test("adds trustworthy session-relative times to AI-only evidence", () => {
     ],
   });
 
-  assert.match(result.context, /"evidenceId":"E1"[^\n]*"evidenceOffsetMs":8000[^\n]*"evidenceTime":"00:08"/);
-  assert.match(result.context, /"evidenceId":"E2"[^\n]*"evidenceOffsetMs":9000[^\n]*"evidenceTime":"00:09"/);
+  const compacted = getContextEvents(result.context);
+
+  assert.equal(compacted[0].evidenceOffsetMs, 8000);
+  assert.equal(compacted[0].evidenceTime, "00:08");
+  assert.equal(compacted[1].evidenceOffsetMs, 9000);
+  assert.equal(compacted[1].evidenceTime, "00:09");
   assert.doesNotMatch(result.context, /forged|999999/);
-  assert.match(result.context, /"evidenceId":"E4"[^\n]*"evidenceTime":"01:01:02"/);
+  assert.equal(compacted[3].evidenceTime, "01:01:02");
 });
 
 test("generates exactly ten unique questions with structured output", async () => {
@@ -97,6 +220,7 @@ test("generates exactly ten unique questions with structured output", async () =
     questions,
   );
   assert.equal(request.model, process.env.ANTHROPIC_MODEL || "claude-opus-5");
+  assert.equal(request.max_tokens, 800);
   assert.equal(request.system[1].cache_control.ttl, "5m");
   assert.equal(request.output_config.format.type, "json_schema");
 });
@@ -111,6 +235,7 @@ test("returns grounded answers and rejects unknown evidence references", async (
   const client = {
     messages: {
       create: async (request) => {
+        assert.equal(request.max_tokens, 1500);
         assert.match(request.system[0].text, /chronological order/);
         assert.match(request.system[0].text, /\[E7\]/);
         assert.match(request.messages[0].content, /chronological sequence/);
@@ -163,6 +288,7 @@ test("normalizes strong answers and rejects weak structured fields", async () =>
     { ...response, evidence: [{ evidenceId: "E1", summary: " " }] },
     { ...response, evidence: [response.evidence[0], response.evidence[0]] },
     { ...response, nextSteps: [" "] },
+    { ...response, nextSteps: ["One", "Two", "Three", "Four"] },
     { ...response, answer: "An uncited event failed [E2]." },
     { ...response, answer: "The request failed [E1].", evidence: [] },
     {

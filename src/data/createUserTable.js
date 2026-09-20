@@ -113,11 +113,20 @@ const createLogsTable = async () => {
         CONSTRAINT live_sessions_applications_array CHECK (
           JSONB_TYPEOF(applications) = 'array'
         ),
-        CONSTRAINT live_sessions_events_array CHECK (
-          JSONB_TYPEOF(events) = 'array'
-          AND JSONB_ARRAY_LENGTH(events) BETWEEN 1 AND 300
-        ),
         CONSTRAINT live_sessions_time_order CHECK (ended_at >= started_at)
+      )
+    `);
+
+    await client.query(`
+      ALTER TABLE public.live_sessions
+      DROP CONSTRAINT IF EXISTS live_sessions_events_array
+    `);
+
+    await client.query(`
+      ALTER TABLE public.live_sessions
+      ADD CONSTRAINT live_sessions_events_array CHECK (
+        JSONB_TYPEOF(events) = 'array'
+        AND JSONB_ARRAY_LENGTH(events) > 0
       )
     `);
 

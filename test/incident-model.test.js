@@ -264,11 +264,7 @@ test("validates completed live sessions before querying", async () => {
 
   await assert.rejects(createLiveSession({ ...valid, clientKey: " " }), /clientKey/);
   await assert.rejects(createLiveSession({ ...valid, userId: " " }), /userId/);
-  await assert.rejects(createLiveSession({ ...valid, events: [] }), /between 1 and 300/);
-  await assert.rejects(
-    createLiveSession({ ...valid, events: Array.from({ length: 301 }, () => ({})) }),
-    /between 1 and 300/,
-  );
+  await assert.rejects(createLiveSession({ ...valid, events: [] }), /non-empty array/);
   await assert.rejects(createLiveSession({ ...valid, events: ["invalid"] }), /JSON object/);
   await assert.rejects(createLiveSession({ ...valid, startedAt: "invalid" }), /startedAt/);
   await assert.rejects(
@@ -279,6 +275,27 @@ test("validates completed live sessions before querying", async () => {
     }),
     /endedAt must be after or equal to startedAt/,
   );
+});
+
+test("stores more than 300 live events for complete AI evidence", async () => {
+  const query = mock.method(pool, "query", async (_sql, values) => ({
+    rows: [{ id: values[0] }],
+  }));
+  const events = Array.from({ length: 301 }, (_, index) => ({ index }));
+
+  try {
+    await createLiveSession({
+      clientKey: "democrm",
+      userId: "120040",
+      events,
+      startedAt: "2026-09-20T10:00:00.000Z",
+      endedAt: "2026-09-20T10:01:00.000Z",
+    });
+
+    assert.equal(JSON.parse(query.mock.calls[0].arguments[1][7]).length, 301);
+  } finally {
+    query.mock.restore();
+  }
 });
 
 test("loads a completed live session as generic chronological AI evidence", async () => {

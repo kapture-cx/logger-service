@@ -134,7 +134,7 @@ and returns a grounded explanation with evidence and next steps. rrweb replay
 events are never sent to Claude. Questions and answers are not stored.
 
 The same endpoints accept `sourceType: "live-session"` after the dashboard
-saves the newest 300 events from an ended live-monitoring session:
+saves all events from an ended live-monitoring session:
 
 ```http
 POST /api/live-sessions

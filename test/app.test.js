@@ -182,7 +182,7 @@ test("validates live sessions and generic AI requests before accessing storage",
   const liveSessionBody = await liveSessionResponse.json();
 
   assert.equal(liveSessionResponse.status, 400);
-  assert.equal(liveSessionBody.message, "events must contain between 1 and 300 items");
+  assert.equal(liveSessionBody.message, "events must be a non-empty array");
 
   const unsupportedResponse = await fetch(
     `${baseUrl}/api/ai-investigator/questions`,

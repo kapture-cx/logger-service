@@ -547,8 +547,8 @@ export const createLiveSession = async ({
     throw new TypeError("applications must be an array of non-empty strings");
   }
 
-  if (!Array.isArray(events) || events.length === 0 || events.length > 300) {
-    throw new TypeError("events must contain between 1 and 300 items");
+  if (!Array.isArray(events) || events.length === 0) {
+    throw new TypeError("events must be a non-empty array");
   }
 
   if (events.some((event) =>

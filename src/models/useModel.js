@@ -587,6 +587,67 @@ export const createLiveSession = async ({
   return result.rows[0];
 };
 
+export const getLiveSessions = async ({ clientKey, userId } = {}) => {
+  if (typeof clientKey !== "string" || !clientKey.trim()) {
+    throw new TypeError("clientKey must be a non-empty string");
+  }
+
+  if (typeof userId !== "string" || !userId.trim()) {
+    throw new TypeError("userId must be a non-empty string");
+  }
+
+  const result = await pool.query(
+    `SELECT id, client_key AS "clientKey", user_id AS "userId", agent,
+       designation, host, applications,
+       started_at AS "startedAt", ended_at AS "endedAt",
+       EXTRACT(EPOCH FROM (ended_at - started_at)) * 1000 AS "durationMs",
+       JSONB_ARRAY_LENGTH(events) AS "eventCount",
+       created_at AS "createdAt"
+     FROM public.live_sessions
+     WHERE client_key = $1 AND user_id = $2
+     ORDER BY created_at DESC
+     LIMIT 50`,
+    [clientKey.trim(), userId.trim()],
+  );
+
+  return result.rows.map((session) => ({
+    ...session,
+    durationMs: Number(session.durationMs),
+    eventCount: Number(session.eventCount),
+  }));
+};
+
+export const getLiveSession = async (id) => {
+  if (typeof id !== "string" || !UUID_PATTERN.test(id)) {
+    throw new TypeError("live session id must be a valid UUID");
+  }
+
+  const result = await pool.query(
+    `SELECT id, client_key AS "clientKey", user_id AS "userId", agent,
+       designation, host, applications, events,
+       started_at AS "startedAt", ended_at AS "endedAt",
+       EXTRACT(EPOCH FROM (ended_at - started_at)) * 1000 AS "durationMs",
+       JSONB_ARRAY_LENGTH(events) AS "eventCount",
+       created_at AS "createdAt"
+     FROM public.live_sessions
+     WHERE id = $1`,
+    [id],
+  );
+  const session = result.rows[0];
+
+  if (!session) {
+    const error = new Error("Live monitoring session not found");
+    error.status = 404;
+    throw error;
+  }
+
+  return {
+    ...session,
+    durationMs: Number(session.durationMs),
+    eventCount: Number(session.eventCount),
+  };
+};
+
 export const getLiveSessionInvestigationEvidence = async (id) => {
   if (typeof id !== "string" || !UUID_PATTERN.test(id)) {
     throw new TypeError("live session id must be a valid UUID");

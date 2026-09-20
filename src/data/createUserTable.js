@@ -130,6 +130,11 @@ const createLogsTable = async () => {
       )
     `);
 
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_live_sessions_agent_created
+      ON public.live_sessions (client_key, user_id, created_at DESC)
+    `);
+
     await client.query("COMMIT");
     console.log("Logs table is ready");
   } catch (error) {

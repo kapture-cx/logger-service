@@ -8,6 +8,8 @@ import {
   getAllLogs,
   getIncident as getIncidentModel,
   getIncidents as getIncidentsModel,
+  getLiveSession as getLiveSessionModel,
+  getLiveSessions as getLiveSessionsModel,
   getLogsByFilters,
 } from "../models/useModel.js";
 import { loadInvestigationEvidence } from "../investigationEvidence.js";
@@ -157,6 +159,32 @@ export const saveLiveSession = async (req, res, next) => {
       201,
       "Live monitoring session saved successfully",
       await createLiveSessionModel(req.body),
+    );
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export const fetchLiveSessions = async (req, res, next) => {
+  try {
+    return handleResponse(
+      res,
+      200,
+      "Live monitoring sessions fetched successfully",
+      await getLiveSessionsModel(req.query),
+    );
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export const fetchLiveSession = async (req, res, next) => {
+  try {
+    return handleResponse(
+      res,
+      200,
+      "Live monitoring session fetched successfully",
+      await getLiveSessionModel(req.params.id),
     );
   } catch (error) {
     return next(error);

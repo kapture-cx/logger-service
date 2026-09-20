@@ -11,7 +11,9 @@ import {
   getIncident,
   getIncidentInvestigationEvidence,
   getIncidents,
+  getLiveSession,
   getLiveSessionInvestigationEvidence,
+  getLiveSessions,
 } from "../src/models/useModel.js";
 
 const incidentId = "123e4567-e89b-42d3-a456-426614174000";
@@ -293,6 +295,82 @@ test("stores more than 300 live events for complete AI evidence", async () => {
     });
 
     assert.equal(JSON.parse(query.mock.calls[0].arguments[1][7]).length, 301);
+  } finally {
+    query.mock.restore();
+  }
+});
+
+test("lists live sessions for an exact client and user without events", async () => {
+  const query = mock.method(pool, "query", async () => ({
+    rows: [{
+      id: incidentId,
+      clientKey: "democrm",
+      userId: "120040",
+      durationMs: "60000.000000",
+      eventCount: 301,
+    }],
+  }));
+
+  try {
+    const sessions = await getLiveSessions({
+      clientKey: "democrm",
+      userId: "120040",
+    });
+    const [sql, values] = query.mock.calls[0].arguments;
+
+    assert.deepEqual(values, ["democrm", "120040"]);
+    assert.match(sql, /ORDER BY created_at DESC/);
+    assert.match(sql, /LIMIT 50/);
+    assert.doesNotMatch(sql, /applications, events/);
+    assert.equal(sessions[0].durationMs, 60000);
+    assert.equal(sessions[0].eventCount, 301);
+    assert.equal("events" in sessions[0], false);
+  } finally {
+    query.mock.restore();
+  }
+});
+
+test("validates live session list identity before querying", async () => {
+  await assert.rejects(getLiveSessions(), /clientKey/);
+  await assert.rejects(
+    getLiveSessions({ clientKey: "democrm", userId: " " }),
+    /userId/,
+  );
+});
+
+test("returns complete live session details with all events", async () => {
+  const events = Array.from({ length: 301 }, (_, index) => ({ index }));
+  const query = mock.method(pool, "query", async () => ({
+    rows: [{
+      id: incidentId,
+      durationMs: "60000.000000",
+      eventCount: 301,
+      events,
+    }],
+  }));
+
+  try {
+    const session = await getLiveSession(incidentId);
+
+    assert.equal(session.events.length, 301);
+    assert.equal(session.events[0].index, 0);
+    assert.equal(session.events[300].index, 300);
+    assert.equal(session.durationMs, 60000);
+    assert.equal(query.mock.calls[0].arguments[1][0], incidentId);
+  } finally {
+    query.mock.restore();
+  }
+});
+
+test("rejects invalid and unknown live session detail ids", async () => {
+  await assert.rejects(getLiveSession("not-a-uuid"), /valid UUID/);
+
+  const query = mock.method(pool, "query", async () => ({ rows: [] }));
+  try {
+    await assert.rejects(
+      getLiveSession(incidentId),
+      (error) => error.status === 404,
+    );
   } finally {
     query.mock.restore();
   }

@@ -133,6 +133,15 @@ assigns temporary evidence IDs such as `E1`, limits the context sent to Claude,
 and returns a grounded explanation with evidence and next steps. rrweb replay
 events are never sent to Claude. Questions and answers are not stored.
 
+Evidence sent to Claude also receives a temporary session-relative time. This
+lets the investigator describe the shortest relevant causal sequence without
+changing the stored events or public API response. A typical answer can explain
+that the user clicked **Create Customer** at `00:08` `[E6]`, the following
+`POST /customers` returned HTTP 500 at `00:09` `[E7]`, and a related runtime
+error followed at `[E8]`. Observed facts are cited separately from the inferred
+likely cause, and next steps are tied to those concrete events rather than
+generic advice.
+
 The same endpoints accept `sourceType: "live-session"` after the dashboard
 saves all events from an ended live-monitoring session:
 
@@ -155,6 +164,23 @@ The returned live-session UUID is used as `sourceId` for questions and answers.
 The Claude integration receives the same generic evidence structure for both
 source types. The WebSocket protocol is unchanged, and AI investigation becomes
 available only after the dashboard explicitly stops and saves the session.
+
+Completed sessions can be discovered for one exact agent identity without
+loading their event arrays:
+
+```http
+GET /api/live-sessions?clientKey=democrm&userId=120040
+```
+
+The response contains the latest 50 summaries ordered newest first. After a
+user selects one, load its complete chronological evidence with:
+
+```http
+GET /api/live-sessions/:id
+```
+
+The dashboard paginates those events locally for display, while metrics and AI
+investigation continue to use the complete saved session.
 
 ## Semantic click monitoring
 

@@ -174,6 +174,18 @@ test("validates incident discovery filters before accessing storage", async () =
 });
 
 test("validates live sessions and generic AI requests before accessing storage", async () => {
+  const listResponse = await fetch(`${baseUrl}/api/live-sessions`);
+  const listBody = await listResponse.json();
+
+  assert.equal(listResponse.status, 400);
+  assert.equal(listBody.message, "clientKey must be a non-empty string");
+
+  const detailResponse = await fetch(`${baseUrl}/api/live-sessions/not-a-uuid`);
+  const detailBody = await detailResponse.json();
+
+  assert.equal(detailResponse.status, 400);
+  assert.equal(detailBody.message, "live session id must be a valid UUID");
+
   const liveSessionResponse = await fetch(`${baseUrl}/api/live-sessions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

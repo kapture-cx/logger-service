@@ -9,6 +9,11 @@ import {
   getIncidents as getIncidentsModel,
   getLogsByFilters,
 } from "../models/useModel.js";
+import { loadInvestigationEvidence } from "../investigationEvidence.js";
+import {
+  answerInvestigationQuestion,
+  generateInvestigationQuestions,
+} from "../aiInvestigator.js";
 
 const flatEvents = (logs) => {
   return logs.flatMap((log) =>
@@ -138,6 +143,52 @@ export const fetchIncidents = async (req, res, next) => {
       200,
       "Incidents fetched successfully",
       await getIncidentsModel(req.query),
+    );
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export const generateAiInvestigationQuestions = async (req, res, next) => {
+  try {
+    const { sourceType, sourceId } = req.body || {};
+    const evidence = await loadInvestigationEvidence({ sourceType, sourceId });
+    const questions = await generateInvestigationQuestions(evidence);
+
+    return handleResponse(
+      res,
+      200,
+      "Investigation questions generated successfully",
+      { sourceType, sourceId, questions },
+    );
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export const askAiInvestigator = async (req, res, next) => {
+  try {
+    const { sourceType, sourceId, question } = req.body || {};
+
+    if (typeof question !== "string" || !question.trim()) {
+      throw new TypeError("question must be a non-empty string");
+    }
+
+    if (question.trim().length > 1000) {
+      throw new TypeError("question must not exceed 1000 characters");
+    }
+
+    const evidence = await loadInvestigationEvidence({ sourceType, sourceId });
+    const answer = await answerInvestigationQuestion(
+      evidence,
+      question.trim(),
+    );
+
+    return handleResponse(
+      res,
+      200,
+      "Investigation question answered successfully",
+      { sourceType, sourceId, question: question.trim(), ...answer },
     );
   } catch (error) {
     return next(error);

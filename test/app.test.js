@@ -172,3 +172,35 @@ test("validates incident discovery filters before accessing storage", async () =
   assert.equal(invalidCmIdResponse.status, 400);
   assert.equal(invalidCmIdBody.message, "cmId must be a non-empty string");
 });
+
+test("validates generic AI investigator requests before accessing storage", async () => {
+  const unsupportedResponse = await fetch(
+    `${baseUrl}/api/ai-investigator/questions`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sourceType: "live-session", sourceId: "x" }),
+    },
+  );
+  const unsupportedBody = await unsupportedResponse.json();
+
+  assert.equal(unsupportedResponse.status, 400);
+  assert.equal(unsupportedBody.message, "Unsupported AI investigation source");
+
+  const blankQuestionResponse = await fetch(
+    `${baseUrl}/api/ai-investigator/ask`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sourceType: "incident",
+        sourceId: "123e4567-e89b-42d3-a456-426614174000",
+        question: " ",
+      }),
+    },
+  );
+  const blankQuestionBody = await blankQuestionResponse.json();
+
+  assert.equal(blankQuestionResponse.status, 400);
+  assert.equal(blankQuestionBody.message, "question must be a non-empty string");
+});

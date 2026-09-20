@@ -32,6 +32,41 @@ function createStorage() {
   };
 }
 
+function createClickElement({
+  tagName = "button",
+  innerText = "",
+  attributes = {},
+  interactive = true,
+  ignored = false,
+  recorder = false,
+  checked,
+  labels = [],
+  multiple = false,
+} = {}) {
+  return {
+    tagName: tagName.toUpperCase(),
+    innerText,
+    checked,
+    labels,
+    multiple,
+    type: attributes.type,
+    value: "must-never-be-captured",
+    getAttribute(name) {
+      return attributes[name] ?? null;
+    },
+    matches() {
+      return interactive;
+    },
+    closest(selector) {
+      if (selector.includes("data-monitoring-ignore")) {
+        return ignored || recorder ? this : null;
+      }
+
+      return interactive ? this : null;
+    },
+  };
+}
+
 function createBrowserContext() {
   const elements = [];
   const intervals = [];
@@ -136,6 +171,9 @@ function createBrowserContext() {
         callbacks.add(callback);
         listeners.set(type, callbacks);
       },
+      dispatchEvent(event) {
+        listeners.get(event.type)?.forEach((callback) => callback(event));
+      },
     },
     fetch: async (url, options) => {
       requests.push({ url, options });
@@ -186,7 +224,15 @@ function createBrowserContext() {
   browser.window = browser;
   browser.globalThis = browser;
 
-  return { browser, elements, intervals, requests, scripts, timeouts };
+  return {
+    browser,
+    elements,
+    intervals,
+    listeners,
+    requests,
+    scripts,
+    timeouts,
+  };
 }
 
 function createFakeWebSocket() {
@@ -292,6 +338,185 @@ test("the browser SDK derives its endpoint and reads current client details", as
     userId: "456",
     tenantId: "acme",
   });
+});
+
+test("semantic clicks use text and safe fallbacks while respecting exclusions", async () => {
+  const bundle = await readFile(bundlePath, "utf8");
+  const { browser, intervals, listeners, requests } = createBrowserContext();
+  const context = vm.createContext(browser);
+
+  vm.runInContext(bundle, context);
+  vm.runInContext(bundle, context);
+  assert.equal(listeners.get("click").size, 1);
+
+  const button = createClickElement({
+    innerText: `  Create   ${"Customer ".repeat(20)}`,
+    attributes: { "data-monitoring-name": "stable-create-customer" },
+  });
+  const icon = createClickElement({ tagName: "span", interactive: false });
+  browser.document.dispatchEvent({
+    type: "click",
+    target: icon,
+    composedPath: () => [icon, button],
+  });
+
+  const input = createClickElement({
+    tagName: "input",
+    attributes: {
+      type: "text",
+      "data-monitoring-name": "customer-search",
+      "aria-label": "Search customers",
+      name: "search",
+      id: "search-input",
+    },
+  });
+  browser.document.dispatchEvent({
+    type: "click",
+    target: input,
+    composedPath: () => [input],
+  });
+
+  const checkbox = createClickElement({
+    tagName: "input",
+    attributes: { type: "checkbox" },
+    checked: true,
+    labels: [{ innerText: "  Enable   notifications  " }],
+  });
+  browser.document.dispatchEvent({
+    type: "click",
+    target: checkbox,
+    composedPath: () => [checkbox],
+  });
+
+  const ordinaryDiv = createClickElement({ tagName: "div", interactive: false });
+  const ignoredButton = createClickElement({ innerText: "Sensitive action", ignored: true });
+  const recorderButton = createClickElement({ innerText: "Stop recording", recorder: true });
+
+  for (const target of [ordinaryDiv, ignoredButton, recorderButton]) {
+    browser.document.dispatchEvent({
+      type: "click",
+      target,
+      composedPath: () => [target],
+    });
+  }
+
+  intervals[0]();
+  await Promise.resolve();
+
+  const payload = JSON.parse(requests[0].options.body);
+  assert.equal(payload.events.length, 3);
+  assert.equal(payload.events[0].type, "user-click");
+  assert.equal(payload.events[0].element, "button");
+  assert.equal(payload.events[0].controlType, "button");
+  assert.equal(payload.events[0].buttonType, "submit");
+  assert.equal(payload.events[0].monitoringName, "stable-create-customer");
+  assert.equal(payload.events[0].role, "button");
+  assert.equal(payload.events[0].label.length, 100);
+  assert.match(payload.events[0].label, /^Create Customer/);
+  assert.equal(payload.events[1].element, "input");
+  assert.equal(payload.events[1].controlType, "text");
+  assert.equal(payload.events[1].label, "customer-search");
+  assert.equal(payload.events[1].controlName, "search");
+  assert.equal(payload.events[1].inputType, "text");
+  assert.equal(payload.events[2].element, "input");
+  assert.equal(payload.events[2].controlType, "checkbox");
+  assert.equal(payload.events[2].label, "Enable notifications");
+  assert.equal(payload.events[2].inputType, "checkbox");
+  assert.equal(payload.events[2].checked, true);
+  assert.equal(JSON.stringify(payload).includes("must-never-be-captured"), false);
+  assert.equal(JSON.stringify(payload).includes("Sensitive action"), false);
+  assert.equal(JSON.stringify(payload).includes("Stop recording"), false);
+});
+
+test("semantic clicks receive incident correlation and live forwarding", async () => {
+  const bundle = await readFile(bundlePath, "utf8");
+  const { browser, elements, requests } = createBrowserContext();
+  const FakeWebSocket = createFakeWebSocket();
+  browser.WebSocket = FakeWebSocket;
+  browser.document.currentScript.dataset.incidentRecorder = "true";
+  browser.document.currentScript.dataset.websocketEndPoint =
+    "ws://localhost:5001/api/live-monitoring";
+  browser.__KaptureIncidentRecorder = { record: () => () => {} };
+  const context = vm.createContext(browser);
+
+  vm.runInContext(
+    `window.KaptureMonitoringConfig = {
+      getClientDetails: () => ({ clientKey: "democrm", userId: 1 })
+    }`,
+    context,
+  );
+  vm.runInContext(bundle, context);
+  const socket = FakeWebSocket.instances[0];
+  socket.open();
+  socket.receive({ type: "START_LIVE" });
+  const recorderHost = elements.find((element) => element.dataset.kaptureRecorder);
+  await recorderHost.shadowRoot.getElementById("record").click();
+
+  const button = createClickElement({ innerText: "Create Customer" });
+  browser.document.dispatchEvent({
+    type: "click",
+    target: button,
+    composedPath: () => [button],
+  });
+  await browser.MonitoringService.flush();
+
+  const logRequest = requests.find((request) =>
+    request.url.endsWith("/api/logs"),
+  );
+  const click = JSON.parse(logRequest.options.body).events[0];
+  const liveClick = socket.sent.find(
+    (message) => message.type === "LIVE_EVENT" && message.event.type === "user-click",
+  );
+
+  assert.equal(click.label, "Create Customer");
+  assert.equal(click.incidentId, "123e4567-e89b-42d3-a456-426614174000");
+  assert.equal(typeof click.incidentOffsetMs, "number");
+  assert.equal(liveClick.event.incidentId, click.incidentId);
+});
+
+test("semantic clicks describe each supported kind of interactive control", async () => {
+  const bundle = await readFile(bundlePath, "utf8");
+  const { browser, intervals, requests } = createBrowserContext();
+  vm.runInContext(bundle, vm.createContext(browser));
+
+  const controls = [
+    createClickElement({ tagName: "a", innerText: "Customer details" }),
+    createClickElement({
+      tagName: "select",
+      attributes: { name: "region", type: "select-multiple" },
+      multiple: true,
+    }),
+    createClickElement({ tagName: "textarea", attributes: { name: "notes" } }),
+    createClickElement({ tagName: "summary", innerText: "Advanced options" }),
+    createClickElement({
+      tagName: "div",
+      attributes: { role: "tab", "aria-label": "Activity" },
+    }),
+    createClickElement({
+      tagName: "div",
+      attributes: { "data-monitoring-name": "custom-action" },
+    }),
+  ];
+
+  controls.forEach((target) => browser.document.dispatchEvent({
+    type: "click",
+    target,
+    composedPath: () => [target],
+  }));
+  intervals[0]();
+  await Promise.resolve();
+
+  const events = JSON.parse(requests[0].options.body).events;
+  assert.deepEqual(
+    events.map((event) => event.controlType),
+    ["link", "select-multiple", "textarea", "disclosure", "tab", "div"],
+  );
+  assert.equal(events[1].selectType, "select-multiple");
+  assert.equal(events[1].controlName, "region");
+  assert.equal(events[2].controlName, "notes");
+  assert.equal(events[3].role, "button");
+  assert.equal(events[4].role, "tab");
+  assert.equal(events[5].monitoringName, "custom-action");
 });
 
 test("the incident recorder widget is opt-in and lazily loads its bundle", async () => {

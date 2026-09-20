@@ -8,6 +8,7 @@ import {
   deleteAbandonedIncidents,
   deleteIncident,
   getIncident,
+  getIncidentInvestigationEvidence,
   getIncidents,
 } from "../src/models/useModel.js";
 
@@ -151,6 +152,72 @@ test("retrieves replay events with correlated technical logs", async () => {
     assert.deepEqual(incident.replayEvents, [{ type: 1 }]);
     assert.equal(incident.logs[0].incidentId, incidentId);
     assert.equal(incident.logs[0].clientDetails.userId, "qa-1");
+  } finally {
+    query.mock.restore();
+  }
+});
+
+test("loads a ready incident as generic AI evidence without replay events", async () => {
+  const query = mock.method(pool, "query", async (sql) =>
+    sql.includes("FROM public.incidents")
+      ? {
+          rows: [{
+            id: incidentId,
+            app: "kapturecrm-ui",
+            status: "ready",
+            title: "Broken form",
+            expectedBehavior: "Customer is created",
+            actualBehavior: "Request failed",
+            clientDetails: { userId: "qa-1" },
+          }],
+        }
+      : {
+          rows: [{
+            event: { type: "api-request", statusCode: 500 },
+            app: "kapturecrm-ui",
+            client_details: { userId: "qa-1" },
+          }],
+        },
+  );
+
+  try {
+    const evidence = await getIncidentInvestigationEvidence(incidentId);
+    const incidentSql = query.mock.calls[0].arguments[0];
+
+    assert.equal(evidence.sourceType, "incident");
+    assert.equal(evidence.sourceId, incidentId);
+    assert.equal(evidence.metadata.expectedBehavior, "Customer is created");
+    assert.equal(evidence.events[0].evidenceId, "E1");
+    assert.equal(evidence.events[0].statusCode, 500);
+    assert.doesNotMatch(incidentSql, /replay_events/i);
+  } finally {
+    query.mock.restore();
+  }
+});
+
+test("rejects incomplete incidents and ready incidents without logs for AI", async () => {
+  const query = mock.method(pool, "query", async (sql) =>
+    sql.includes("FROM public.incidents")
+      ? { rows: [{ id: incidentId, status: "recording" }] }
+      : { rows: [] },
+  );
+
+  try {
+    await assert.rejects(
+      getIncidentInvestigationEvidence(incidentId),
+      (error) => error.status === 409,
+    );
+
+    query.mock.mockImplementation(async (sql) =>
+      sql.includes("FROM public.incidents")
+        ? { rows: [{ id: incidentId, status: "ready" }] }
+        : { rows: [] },
+    );
+
+    await assert.rejects(
+      getIncidentInvestigationEvidence(incidentId),
+      (error) => error.status === 422,
+    );
   } finally {
     query.mock.restore();
   }

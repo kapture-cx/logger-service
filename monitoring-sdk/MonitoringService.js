@@ -1,6 +1,7 @@
 // monitoring/MonitoringService.js
 
 import { startConsoleTracker } from "./ConsoleTracker";
+import { startClickTracker } from "./ClickTracker";
 import {
   startErrorBoundaryTracker,
   startErrorTracker,
@@ -167,6 +168,7 @@ export const MonitoringService = {
       });
       startErrorBoundaryTracker();
       startPageTracker();
+      startClickTracker();
 
       window.__kaptureMonitoringStarted = true;
 

@@ -93,6 +93,106 @@ startup and every 15 minutes, permanently deleting incidents that remain in
 `recording` status without a successful chunk update for 30 minutes. Completed
 `ready` incidents are never removed by this cleanup.
 
+## Investigate a completed incident with AI
+
+Configure the server-side Claude credentials. Never expose this API key in the
+browser or dashboard:
+
+```text
+ANTHROPIC_API_KEY=your-key
+ANTHROPIC_MODEL=claude-opus-5
+```
+
+Generate ten suggested questions after opening the AI Investigator panel:
+
+```http
+POST /api/ai-investigator/questions
+Content-Type: application/json
+
+{
+  "sourceType": "incident",
+  "sourceId": "123e4567-e89b-42d3-a456-426614174000"
+}
+```
+
+Ask either a suggested question or text entered by the user:
+
+```http
+POST /api/ai-investigator/ask
+Content-Type: application/json
+
+{
+  "sourceType": "incident",
+  "sourceId": "123e4567-e89b-42d3-a456-426614174000",
+  "question": "Why did the customer form submission fail?"
+}
+```
+
+The backend loads the completed incident and its correlated technical logs,
+assigns temporary evidence IDs such as `E1`, limits the context sent to Claude,
+and returns a grounded explanation with evidence and next steps. rrweb replay
+events are never sent to Claude. Questions and answers are not stored.
+
+The API contract is source-neutral, but only `sourceType: "incident"` is
+currently accepted. An ended live-monitoring session can later be converted to
+the same internal evidence structure without changing the Claude integration or
+dashboard answer format. The current WebSocket protocol is unchanged.
+
+## Semantic click monitoring
+
+The SDK automatically records clicks on interactive controls as lightweight
+`user-click` events. These events use the normal log queue, so they also receive
+incident correlation while recording and are forwarded during live monitoring:
+
+```json
+{
+  "type": "user-click",
+  "element": "button",
+  "controlType": "button",
+  "buttonType": "submit",
+  "label": "Create Customer",
+  "role": "button",
+  "timestamp": "2026-09-20T10:00:00.000Z"
+}
+```
+
+Every click includes a normalized `controlType` so consumers can distinguish
+buttons, links, input types, selects, textareas, summaries, and ARIA controls.
+When available, events also include `monitoringName`, `controlName`,
+`buttonType`, or `selectType`. The label uses normalized visible control text first, limited to 100
+characters, then falls back to `data-monitoring-name`, `aria-label`, an
+associated HTML label, `name`, or `id`. Every input click includes its HTML
+`inputType`. Checkbox and radio clicks also include their resulting boolean
+`checked` state. Input values, URLs, HTML, coordinates, and form data are never
+included.
+
+```json
+{
+  "type": "user-click",
+  "element": "input",
+  "controlType": "checkbox",
+  "inputType": "checkbox",
+  "label": "Enable notifications",
+  "checked": true
+}
+```
+Use `data-monitoring-name` as a stable fallback for icon-only controls:
+
+```html
+<button data-monitoring-name="create-customer"><svg>...</svg></button>
+```
+
+Visible control text can still contain personal data. Suppress click monitoring
+for a sensitive control or complete section with `data-monitoring-ignore`:
+
+```html
+<section data-monitoring-ignore>
+  <button>Reveal customer password</button>
+</section>
+```
+
+The incident recorder widget is excluded automatically.
+
 `data-websocket-end-point` is optional and is the only way to enable the SDK's
 live WebSocket connection. It must be a complete `ws://` or `wss://` URL; the
 SDK never derives it from the HTTP endpoint. When it is omitted or invalid,

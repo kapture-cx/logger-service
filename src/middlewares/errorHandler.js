@@ -12,8 +12,12 @@ const errorHandling = (err, _req, res, _next) => {
 
   return res.status(status).json({
     status,
-    message: status < 500 ? err.message : "Something went wrong",
-    error: status === 500 ? err.message : undefined,
+    message: status < 500 || err.expose ? err.message : "Something went wrong",
+    error: err.expose && err.details
+      ? err.details
+      : status === 500
+        ? err.message
+        : undefined,
   });
 };
 

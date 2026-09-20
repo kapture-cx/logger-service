@@ -15,6 +15,7 @@
     "node": ">=18"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.127.0",
     "@rrweb/record": "^2.1.6",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",

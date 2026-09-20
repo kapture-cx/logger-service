@@ -447,3 +447,74 @@ export const getIncident = async (id) => {
     logs: mapExpandedEvents(logsResult.rows),
   };
 };
+
+export const getIncidentInvestigationEvidence = async (id) => {
+  const validatedId = validateIncidentId(id);
+  const [incidentResult, logsResult] = await Promise.all([
+    pool.query(
+      `SELECT id, app, status, title,
+         expected_behavior AS "expectedBehavior",
+         actual_behavior AS "actualBehavior",
+         session_id AS "sessionId", tab_id AS "tabId",
+         page_view_id AS "pageViewId", client_details AS "clientDetails",
+         started_at AS "startedAt", ended_at AS "endedAt",
+         duration_ms AS "durationMs"
+       FROM public.incidents
+       WHERE id = $1`,
+      [validatedId],
+    ),
+    pool.query(
+      `SELECT expanded.event, log.app, log.client_details
+       FROM public.logs AS log
+       CROSS JOIN LATERAL JSONB_ARRAY_ELEMENTS(log.events)
+         WITH ORDINALITY AS expanded(event, event_order)
+       WHERE expanded.event->>'incidentId' = $1
+       ORDER BY expanded.event->>'timestamp' ASC NULLS LAST,
+         log.created_at ASC, expanded.event_order ASC`,
+      [validatedId],
+    ),
+  ]);
+  const incident = incidentResult.rows[0];
+
+  if (!incident) {
+    const error = new Error("Incident not found");
+    error.status = 404;
+    throw error;
+  }
+
+  if (incident.status !== "ready") {
+    const error = new Error("Incident is not ready for AI investigation");
+    error.status = 409;
+    throw error;
+  }
+
+  const logs = mapExpandedEvents(logsResult.rows);
+
+  if (logs.length === 0) {
+    const error = new Error("Incident has no correlated logs");
+    error.status = 422;
+    throw error;
+  }
+
+  return {
+    sourceType: "incident",
+    sourceId: incident.id,
+    title: incident.title,
+    startedAt: incident.startedAt,
+    endedAt: incident.endedAt,
+    metadata: {
+      app: incident.app,
+      expectedBehavior: incident.expectedBehavior,
+      actualBehavior: incident.actualBehavior,
+      sessionId: incident.sessionId,
+      tabId: incident.tabId,
+      pageViewId: incident.pageViewId,
+      clientDetails: incident.clientDetails,
+      durationMs: incident.durationMs,
+    },
+    events: logs.map((event, index) => ({
+      ...event,
+      evidenceId: `E${index + 1}`,
+    })),
+  };
+};

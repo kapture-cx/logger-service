@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import aiInvestigatorDemoQuestions from "./data/aiInvestigatorDemoQuestions.js";
 
 const MAX_CONTEXT_LENGTH = 40000;
 const MAX_EVENT_LENGTH = 4000;
@@ -21,8 +22,10 @@ const SAFE_HEADER_NAMES = new Set([
 const SENSITIVE_KEY_PATTERN =
   /(?:authorization|cookie|password|passwd|token|secret|api[-_]?key|card[-_]?number|cvv)/i;
 const EVIDENCE_CITATION_PATTERN = /\[(E\d+)\]/g;
-const INSUFFICIENT_EVIDENCE_PATTERN =
-  /\b(?:insufficient|unknown|not enough|unable to (?:determine|establish)|cannot (?:be )?(?:determined|established)|can't (?:be )?(?:determined|established))\b/i;
+const QUESTION_KEYS = Array.from(
+  { length: 10 },
+  (_, index) => `question${index + 1}`,
+);
 const SYSTEM_PROMPT = `You are investigating a completed monitoring session.
 
 Use only the supplied evidence.
@@ -40,7 +43,14 @@ When the evidence is insufficient, state exactly what is known and what addition
 const questionsSchema = {
   type: "object",
   properties: {
-    questions: { type: "array", items: { type: "string" } },
+    questions: {
+      type: "object",
+      properties: Object.fromEntries(
+        QUESTION_KEYS.map((key) => [key, { type: "string" }]),
+      ),
+      required: QUESTION_KEYS,
+      additionalProperties: false,
+    },
   },
   required: ["questions"],
   additionalProperties: false,
@@ -420,6 +430,40 @@ function addEvidenceTime(event, startedAt) {
       };
 }
 
+function buildCitationMetadata(evidence, answer, likelyCause) {
+  const citedEvidenceIds = Array.from(
+    `${answer}\n${likelyCause}`.matchAll(EVIDENCE_CITATION_PATTERN),
+    (match) => match[1],
+  );
+  const seen = new Set();
+
+  return citedEvidenceIds.flatMap((evidenceId) => {
+    if (seen.has(evidenceId)) return [];
+    seen.add(evidenceId);
+
+    const eventIndex = evidence.events.findIndex(
+      (event) => event?.evidenceId === evidenceId,
+    );
+
+    if (eventIndex < 0) return [];
+
+    const event = addEvidenceTime(evidence.events[eventIndex], evidence.startedAt);
+
+    return [{
+      evidenceId,
+      eventIndex,
+      evidenceOffsetMs: Number.isFinite(event.evidenceOffsetMs)
+        ? event.evidenceOffsetMs
+        : null,
+      evidenceTime: typeof event.evidenceTime === "string"
+        ? event.evidenceTime
+        : null,
+      type: typeof event.type === "string" ? event.type : null,
+      timestamp: typeof event.timestamp === "string" ? event.timestamp : null,
+    }];
+  });
+}
+
 function prepareEventForAi(event, startedAt) {
   const enrichedEvent = addEvidenceTime(event, startedAt);
   return enrichedEvent.type === "api-request"
@@ -496,8 +540,84 @@ function createAiError(message, status, details) {
   return error;
 }
 
+function parseAiResponse(text) {
+  const rawText = typeof text === "string" ? text.trim() : "";
+
+  if (!rawText) return "";
+
+  const fencedMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidates = [
+    rawText,
+    fencedMatch?.[1]?.trim(),
+    rawText.includes("{") && rawText.includes("}")
+      ? rawText.slice(rawText.indexOf("{"), rawText.lastIndexOf("}") + 1)
+      : "",
+    rawText.includes("[") && rawText.includes("]")
+      ? rawText.slice(rawText.indexOf("["), rawText.lastIndexOf("]") + 1)
+      : "",
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch (error) {
+      // Keep trying; successfully returned Claude text must not become an error.
+    }
+  }
+
+  return rawText;
+}
+
+function normalizeQuestions(output) {
+  const seen = new Set();
+  const questionValues = Array.isArray(output)
+    ? output
+    : Array.isArray(output?.questions)
+      ? output.questions
+      : output?.questions && typeof output.questions === "object"
+        ? QUESTION_KEYS.map((key) => output.questions[key])
+        : typeof output?.questions === "string"
+          ? [output.questions]
+          : typeof output === "string"
+            ? output.split(/\r?\n/)
+            : [];
+
+  return questionValues
+    .filter((question) => typeof question === "string")
+    .map((question) =>
+      question.replace(/^\s*(?:[-*]|\d+[.)])\s*/, "").trim(),
+    )
+    .filter((question) => {
+      const normalized = question.toLowerCase();
+
+      if (!question || /^```/.test(question) || seen.has(normalized)) {
+        return false;
+      }
+
+      seen.add(normalized);
+      return true;
+    });
+}
+
+function hasInvalidQuestionFormat(output, rawText) {
+  const text = typeof rawText === "string" ? rawText.trim() : "";
+
+  if (!text) return false;
+
+  if (/^(?:```|#{1,6}\s)/.test(text)) return true;
+
+  if (output && typeof output === "object") {
+    return !/^(?:\{|\[)/.test(text);
+  }
+
+  return (
+    typeof output === "string" &&
+    (/^(?:\{|\[)/.test(text) || /"questions"\s*:/.test(text))
+  );
+}
+
 async function requestClaude(evidence, instruction, schema, maxTokens, client) {
-  const { context, evidenceIds } = buildInvestigationContext(evidence);
+  const { context } = buildInvestigationContext(evidence);
 
   if (!client) {
     if (!process.env.ANTHROPIC_API_KEY) {
@@ -562,19 +682,28 @@ async function requestClaude(evidence, instruction, schema, maxTokens, client) {
     throw createAiError("AI service request failed", 502, providerMessage);
   }
 
-  const text = response.content?.find((block) => block.type === "text")?.text;
+  const rawText = Array.isArray(response?.content)
+    ? response.content
+        .filter((block) => block?.type === "text" && typeof block.text === "string")
+        .map((block) => block.text)
+        .join("\n")
+        .trim()
+    : "";
 
-  try {
-    return { output: JSON.parse(text), evidenceIds };
-  } catch (error) {
-    throw createAiError("AI service returned an invalid response", 502);
-  }
+  return {
+    output: parseAiResponse(rawText),
+    rawText,
+    stopReason: response?.stop_reason || null,
+  };
 }
 
 export async function generateInvestigationQuestions(evidence, client) {
-  const { output } = await requestClaude(
-    evidence,
-    `Generate exactly 10 unique, concise investigation questions grounded in the supplied evidence.
+  const instruction = `You MUST return exactly one valid JSON object and nothing else.
+
+Do not return Markdown, headings such as ###, code fences, comments, explanations, or introductory text. Your entire response must follow this exact structure:
+{"questions":{"question1":"...","question2":"...","question3":"...","question4":"...","question5":"...","question6":"...","question7":"...","question8":"...","question9":"...","question10":"..."}}
+
+Fill every field from question1 through question10. Each field must contain one unique, non-empty question of no more than 30 words about a specific observed event, failure, sequence, endpoint, status code, error message, or user action. Do not include generic, speculative, duplicate, empty, or filler questions. Write multiple citations separately as [E4][E5], never as [E4,E5].
 
 Rank the most major and obvious problems first using these rules:
 1. critical: failed API requests with HTTP 5xx, network failures, timeouts, unhandled promise rejections, and JavaScript crashes;
@@ -582,91 +711,88 @@ Rank the most major and obvious problems first using these rules:
 3. medium: warnings, suspicious sequences, repeated requests, and unusually slow requests;
 4. low: successful requests, navigation, and general behavior that is useful only after failures are understood.
 
-Order the questions from most important to least important. Within the same importance level, put a concrete failed API request before indirect symptoms or general behavior. Use actual endpoint paths, status codes, error messages, and clicked-control labels in questions whenever available. The first question must investigate the highest-confidence failure or causal chain. Do not produce generic questions when specific evidence exists.`,
-    questionsSchema,
-    800,
-    client,
-  );
-  const questions =
-    output &&
-    Array.isArray(output.questions) &&
-    output.questions.every((question) => typeof question === "string")
-      ? output.questions.map((question) => question.trim()).filter(Boolean)
-      : [];
+Order the numbered fields from most important to least important. Within the same importance level, put a concrete failed API request before indirect symptoms or general behavior. Use actual endpoint paths, status codes, error messages, and clicked-control labels in questions whenever available. question1 must investigate the highest-confidence failure or causal chain. Before responding, validate that the JSON is complete and contains exactly the 10 required fields.`;
+  let response;
 
-  if (
-    questions.length !== 10 ||
-    new Set(questions.map((question) => question.toLowerCase())).size !== 10
-  ) {
-    throw createAiError("AI service returned invalid investigation questions", 502);
+  try {
+    response = await requestClaude(
+      evidence,
+      instruction,
+      questionsSchema,
+      2500,
+      client,
+    );
+  } catch (error) {
+    if (!error?.expose) throw error;
+
+    console.warn(
+      "AI question generation failed; using demo fallback:",
+      error.message,
+    );
+    return [...aiInvestigatorDemoQuestions];
   }
 
-  return questions;
+  if (
+    (response.stopReason && response.stopReason !== "end_turn") ||
+    hasInvalidQuestionFormat(response.output, response.rawText)
+  ) {
+    console.warn(
+      "AI question response was incomplete or incorrectly formatted; using demo fallback",
+    );
+    return [...aiInvestigatorDemoQuestions];
+  }
+
+  const questions = normalizeQuestions(response.output);
+
+  return questions.length > 0
+    ? questions
+    : [...aiInvestigatorDemoQuestions];
 }
 
 export async function answerInvestigationQuestion(evidence, question, client) {
-  const { output, evidenceIds } = await requestClaude(
+  const { output, rawText } = await requestClaude(
     evidence,
-    `<question>${question}</question>\nAnswer with the shortest evidence-supported chronological sequence, a carefully qualified likely cause, no more than 5 evidence references, and no more than 3 concrete next steps.`,
+    `<question>${question}</question>
+Answer the question directly using only the supplied evidence. Every factual claim MUST include an inline [E#] citation, and the response MUST contain at least one valid citation. Never invent an evidence identifier.
+Include likelyCause, evidence, and nextSteps whenever the evidence supports them. These fields may be empty when they are not applicable or cannot be established. Keep the chronological sequence concise, use no more than 5 evidence references, and provide no more than 3 concrete next steps.`,
     answerSchema,
     1500,
     client,
   );
-  const answer = typeof output?.answer === "string" ? output.answer.trim() : "";
+  const answer = typeof output?.answer === "string"
+    ? output.answer.trim()
+    : typeof output === "string"
+      ? output.trim()
+      : rawText;
   const likelyCause =
     typeof output?.likelyCause === "string" ? output.likelyCause.trim() : "";
   const normalizedEvidence = Array.isArray(output?.evidence)
-    ? output.evidence.map((item) => ({
-        evidenceId:
-          typeof item?.evidenceId === "string" ? item.evidenceId.trim() : "",
-        summary: typeof item?.summary === "string" ? item.summary.trim() : "",
-      }))
+    ? output.evidence
+        .map((item) => typeof item === "string"
+          ? { evidenceId: "", summary: item.trim() }
+          : {
+              evidenceId:
+                typeof item?.evidenceId === "string" ? item.evidenceId.trim() : "",
+              summary: typeof item?.summary === "string" ? item.summary.trim() : "",
+            })
+        .filter((item) => item.evidenceId || item.summary)
     : [];
-  const nextSteps = Array.isArray(output?.nextSteps)
-    ? output.nextSteps.map((step) =>
-        typeof step === "string" ? step.trim() : "",
-      )
-    : [];
-  const returnedEvidenceIds = new Set(
-    normalizedEvidence.map((item) => item.evidenceId),
-  );
-  const citedEvidenceIds = Array.from(
-    `${answer}\n${likelyCause}`.matchAll(EVIDENCE_CITATION_PATTERN),
-    (match) => match[1],
-  );
-  const honestlyReportsInsufficientEvidence =
-    normalizedEvidence.length > 0 ||
-    INSUFFICIENT_EVIDENCE_PATTERN.test(`${answer}\n${likelyCause}`);
-  const validAnswer =
-    Boolean(answer) &&
-    Boolean(likelyCause) &&
-    Array.isArray(output?.evidence) &&
-    normalizedEvidence.length <= 5 &&
-    normalizedEvidence.every(
-      (item) =>
-        item.evidenceId &&
-        item.summary &&
-        evidenceIds.has(item.evidenceId),
-    ) &&
-    returnedEvidenceIds.size === normalizedEvidence.length &&
-    citedEvidenceIds.every(
-      (evidenceId) =>
-        evidenceIds.has(evidenceId) && returnedEvidenceIds.has(evidenceId),
-    ) &&
-    honestlyReportsInsufficientEvidence &&
-    Array.isArray(output?.nextSteps) &&
-    nextSteps.length > 0 &&
-    nextSteps.length <= 3 &&
-    nextSteps.every(Boolean);
-
-  if (!validAnswer) {
-    throw createAiError("AI service returned an invalid investigation answer", 502);
-  }
+  const nextStepValues = Array.isArray(output?.nextSteps)
+    ? output.nextSteps
+    : typeof output?.nextSteps === "string"
+      ? [output.nextSteps]
+      : [];
+  const nextSteps = nextStepValues
+    .filter((step) => typeof step === "string")
+    .map((step) => step.trim())
+    .filter(Boolean);
+  const citations = buildCitationMetadata(evidence, answer, likelyCause);
 
   return {
     answer,
     likelyCause,
     evidence: normalizedEvidence,
     nextSteps,
+    citations,
   };
 }

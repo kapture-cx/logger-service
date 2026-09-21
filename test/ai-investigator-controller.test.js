@@ -79,6 +79,8 @@ test("completed incidents work through both AI investigator controllers", async 
     );
 
     assert.equal(questionResponse.statusCode, 200);
+    assert.equal(questionResponse.body.data.sourceType, "incident");
+    assert.equal(questionResponse.body.data.sourceId, incidentId);
     assert.deepEqual(questionResponse.body.data.questions, questions);
 
     claudeFetch.mock.restore();
@@ -104,6 +106,7 @@ test("completed incidents work through both AI investigator controllers", async 
 
     assert.equal(answerResponse.statusCode, 200);
     assert.equal(answerResponse.body.data.evidence[0].evidenceId, "E1");
+    assert.deepEqual(answerResponse.body.data.citations, []);
   } finally {
     claudeFetch.mock.restore();
     query.mock.restore();
@@ -157,6 +160,8 @@ test("completed live sessions save and work through both AI investigator control
       questionResponse,
       (error) => { throw error; },
     );
+    assert.equal(questionResponse.body.data.sourceType, "live-session");
+    assert.equal(questionResponse.body.data.sourceId, incidentId);
     assert.deepEqual(questionResponse.body.data.questions, questions);
 
     claudeFetch.mock.restore();
@@ -177,6 +182,7 @@ test("completed live sessions save and work through both AI investigator control
 
     assert.equal(answerResponse.statusCode, 200);
     assert.equal(answerResponse.body.data.evidence[0].evidenceId, "E1");
+    assert.deepEqual(answerResponse.body.data.citations, []);
   } finally {
     claudeFetch.mock.restore();
     query.mock.restore();

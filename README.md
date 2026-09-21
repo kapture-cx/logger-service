@@ -159,12 +159,19 @@ events are never sent to Claude. Questions and answers are not stored.
 
 Evidence sent to Claude also receives a temporary session-relative time. This
 lets the investigator describe the shortest relevant causal sequence without
-changing the stored events or public API response. A typical answer can explain
+changing the stored events. A typical answer can explain
 that the user clicked **Create Customer** at `00:08` `[E6]`, the following
 `POST /customers` returned HTTP 500 at `00:09` `[E7]`, and a related runtime
 error followed at `[E8]`. Observed facts are cited separately from the inferred
 likely cause, and next steps are tied to those concrete events rather than
 generic advice.
+
+The `/api/ai-investigator/ask` response also includes a `citations` array for
+turning inline markers such as `[E8]` into clickable dashboard controls. Each
+citation contains its zero-based `eventIndex`, `evidenceOffsetMs`, display-ready
+`evidenceTime`, event `type`, and `timestamp`. The dashboard should seek by
+`evidenceOffsetMs` when available and fall back to `eventIndex`. Unknown evidence
+IDs are omitted from this array and should remain plain text.
 
 To keep investigation latency predictable, the AI context is capped at 40,000
 characters and API payloads are compacted only in the temporary Claude input.

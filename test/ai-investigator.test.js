@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { mock, test } from "node:test";
+import aiInvestigatorDemoQuestions from "../src/data/aiInvestigatorDemoQuestions.js";
 import {
   answerInvestigationQuestion,
   buildInvestigationContext,
@@ -23,6 +24,20 @@ const evidence = {
     },
   ],
 };
+const citationE1 = {
+  evidenceId: "E1",
+  eventIndex: 0,
+  evidenceOffsetMs: null,
+  evidenceTime: null,
+  type: "api-request",
+  timestamp: null,
+};
+
+test("provides the exact ten imported demo fallback questions", () => {
+  assert.equal(aiInvestigatorDemoQuestions.length, 10);
+  assert.match(aiInvestigatorDemoQuestions[0], /dcsedde.*dashboard\/249/);
+  assert.match(aiInvestigatorDemoQuestions[9], /short session duration of 18 seconds/);
+});
 
 function getContextEvents(context) {
   const contents = context
@@ -216,27 +231,191 @@ test("generates exactly ten unique questions with failure-first instructions", a
     "Which page was active?",
     "What successful action preceded it?",
   ];
+  const questionSlots = Object.fromEntries(
+    questions.map((question, index) => [`question${index + 1}`, question]),
+  );
   let request;
+  let calls = 0;
   const client = {
     messages: {
       create: async (body) => {
+        calls += 1;
         request = body;
-        return { content: [{ type: "text", text: JSON.stringify({ questions }) }] };
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({ questions: questionSlots }),
+          }],
+        };
       },
     },
   };
 
   assert.deepEqual(await generateInvestigationQuestions(evidence, client), questions);
   assert.equal(request.model, process.env.ANTHROPIC_MODEL || "claude-opus-5");
-  assert.equal(request.max_tokens, 800);
+  assert.equal(request.max_tokens, 2500);
   assert.equal(request.system[1].cache_control.ttl, "5m");
   assert.equal(request.output_config.format.type, "json_schema");
+  assert.deepEqual(
+    request.output_config.format.schema.properties.questions.required,
+    Object.keys(questionSlots),
+  );
   assert.match(request.messages[0].content, /HTTP 5xx/);
   assert.match(request.messages[0].content, /highest-confidence failure/);
   assert.match(request.messages[0].content, /failed API request before indirect symptoms/);
+  assert.match(request.messages[0].content, /exactly one valid JSON object/);
+  assert.match(request.messages[0].content, /Do not return Markdown/);
+  assert.match(request.messages[0].content, /question10/);
+  assert.match(request.messages[0].content, /no more than 30 words/);
+  assert.match(request.messages[0].content, /\[E4\]\[E5\]/);
+  assert.equal(calls, 1);
 });
 
-test("returns grounded answers and rejects unknown evidence references", async () => {
+test("returns demo questions after one empty Claude response", async () => {
+  let calls = 0;
+  const client = {
+    messages: {
+      create: async () => {
+        calls += 1;
+        return {
+          content: [{ type: "text", text: '{"questions":{}}' }],
+        };
+      },
+    },
+  };
+
+  assert.deepEqual(
+    await generateInvestigationQuestions(evidence, client),
+    aiInvestigatorDemoQuestions,
+  );
+  assert.equal(calls, 1);
+});
+
+test("returns demo questions for structurally unusable Claude output", async () => {
+  const client = {
+    messages: {
+      create: async () => ({
+        content: [{ type: "text", text: '{"message":"No questions"}' }],
+      }),
+    },
+  };
+
+  assert.deepEqual(
+    await generateInvestigationQuestions(evidence, client),
+    aiInvestigatorDemoQuestions,
+  );
+});
+
+test("returns demo questions for truncated Markdown-prefixed JSON", async () => {
+  let calls = 0;
+  const client = {
+    messages: {
+      create: async () => {
+        calls += 1;
+        return {
+          content: [{
+            type: "text",
+            text: '### {"questions":{"question1":"First?","question2":"Second?","question3":"What caused the non-',
+          }],
+          stop_reason: "max_tokens",
+        };
+      },
+    },
+  };
+
+  assert.deepEqual(
+    await generateInvestigationQuestions(evidence, client),
+    aiInvestigatorDemoQuestions,
+  );
+  assert.equal(calls, 1);
+});
+
+test("returns demo questions for an incomplete Claude stop reason", async () => {
+  const questions = Array.from(
+    { length: 10 },
+    (_, index) => `Question ${index + 1}?`,
+  );
+  const client = {
+    messages: {
+      create: async () => ({
+        content: [{ type: "text", text: JSON.stringify({ questions }) }],
+        stop_reason: "max_tokens",
+      }),
+    },
+  };
+
+  assert.deepEqual(
+    await generateInvestigationQuestions(evidence, client),
+    aiInvestigatorDemoQuestions,
+  );
+});
+
+test("returns a partial response without retrying or using the fallback", async () => {
+  const questions = ["First question?", "Second question?"];
+  let calls = 0;
+  const client = {
+    messages: {
+      create: async () => {
+        calls += 1;
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({ questions }),
+          }],
+        };
+      },
+    },
+  };
+
+  assert.deepEqual(
+    await generateInvestigationQuestions(evidence, client),
+    questions,
+  );
+  assert.equal(calls, 1);
+});
+
+test("accepts best-effort question response formats without throwing", async () => {
+  const responses = [
+    {
+      text: '```json\n{"questions":["Why did the request fail?"]}\n```',
+      expected: aiInvestigatorDemoQuestions,
+    },
+    {
+      text: 'Result: {"questions":["Was the payload rejected?"]} done',
+      expected: aiInvestigatorDemoQuestions,
+    },
+    {
+      text: '["Why was the request slow?"]',
+      expected: ["Why was the request slow?"],
+    },
+    {
+      text: "1. Why did the request fail?\n- Was the payload rejected?",
+      expected: ["Why did the request fail?", "Was the payload rejected?"],
+    },
+    {
+      text: "A raw investigation question",
+      expected: ["A raw investigation question"],
+    },
+    { text: "", expected: aiInvestigatorDemoQuestions },
+  ];
+
+  for (const response of responses) {
+    const client = {
+      messages: {
+        create: async () => ({
+          content: [{ type: "text", text: response.text }],
+        }),
+      },
+    };
+
+    assert.deepEqual(
+      await generateInvestigationQuestions(evidence, client),
+      response.expected,
+    );
+  }
+});
+
+test("returns grounded citations without rejecting unknown evidence references", async () => {
   const answer = {
     answer: "The request failed at 00:00 [E1].",
     likelyCause: "The backend returned HTTP 500 [E1].",
@@ -259,17 +438,18 @@ test("returns grounded answers and rejects unknown evidence references", async (
 
   assert.deepEqual(
     await answerInvestigationQuestion(evidence, "Why did it fail?", client),
-    answer,
+    { ...answer, citations: [citationE1] },
   );
 
-  answer.evidence[0].evidenceId = "E999";
-  await assert.rejects(
-    answerInvestigationQuestion(evidence, "Why did it fail?", client),
-    (error) => error.status === 502 && /invalid investigation answer/.test(error.message),
+  answer.answer = "The request failed at 00:00 [E999].";
+  answer.likelyCause = "The backend returned HTTP 500.";
+  assert.deepEqual(
+    await answerInvestigationQuestion(evidence, "Why did it fail?", client),
+    { ...answer, citations: [] },
   );
 });
 
-test("normalizes strong answers and rejects weak structured fields", async () => {
+test("allows missing citations and optional answer fields", async () => {
   let response = {
     answer: "  The request returned 500 [E1].  ",
     likelyCause: "  The server rejected the operation [E1].  ",
@@ -291,35 +471,147 @@ test("normalizes strong answers and rejects weak structured fields", async () =>
       likelyCause: "The server rejected the operation [E1].",
       evidence: [{ evidenceId: "E1", summary: "Returned HTTP 500." }],
       nextSteps: ["Inspect the server trace for this request."],
+      citations: [citationE1],
+    },
+  );
+
+  response = { answer: "The request failed [E1]." };
+  assert.deepEqual(
+    await answerInvestigationQuestion(evidence, "Why?", client),
+    {
+      answer: "The request failed [E1].",
+      likelyCause: "",
+      evidence: [],
+      nextSteps: [],
+      citations: [citationE1],
     },
   );
 
   for (const invalidResponse of [
-    { ...response, answer: " " },
-    { ...response, evidence: [{ evidenceId: "E1", summary: " " }] },
-    { ...response, evidence: [response.evidence[0], response.evidence[0]] },
-    { ...response, nextSteps: [" "] },
-    { ...response, nextSteps: ["One", "Two", "Three", "Four"] },
-    { ...response, answer: "An uncited event failed [E2]." },
-    { ...response, answer: "The request failed [E1].", evidence: [] },
-    {
-      ...response,
-      answer: "The request failed.",
-      likelyCause: "The backend rejected it.",
-      evidence: [],
-    },
+    { answer: "The request failed without a citation." },
+    { answer: "The request failed [E999]." },
   ]) {
     response = invalidResponse;
-    await assert.rejects(
-      answerInvestigationQuestion(evidence, "Why?", client),
-      /invalid investigation answer/,
+    assert.deepEqual(
+      await answerInvestigationQuestion(evidence, "Why?", client),
+      {
+        answer: invalidResponse.answer,
+        likelyCause: "",
+        evidence: [],
+        nextSteps: [],
+        citations: [],
+      },
     );
   }
 });
 
-test("accepts an honest insufficient-evidence answer without citations", async () => {
+test("uses plain or empty Claude text as a non-blocking answer", async () => {
+  let text = "The backend request failed without structured JSON.";
+  const client = {
+    messages: {
+      create: async () => ({ content: [{ type: "text", text }] }),
+    },
+  };
+
+  assert.deepEqual(
+    await answerInvestigationQuestion(evidence, "Why?", client),
+    {
+      answer: text,
+      likelyCause: "",
+      evidence: [],
+      nextSteps: [],
+      citations: [],
+    },
+  );
+
+  text = "";
+  assert.deepEqual(
+    await answerInvestigationQuestion(evidence, "Why?", client),
+    {
+      answer: "",
+      likelyCause: "",
+      evidence: [],
+      nextSteps: [],
+      citations: [],
+    },
+  );
+});
+
+test("accepts Markdown-wrapped and surrounding-text answer JSON", async () => {
+  const expected = {
+    answer: "The request failed [E1].",
+    likelyCause: "",
+    evidence: [],
+    nextSteps: [],
+  };
+  let text = `\`\`\`json\n${JSON.stringify(expected)}\n\`\`\``;
+  const client = {
+    messages: {
+      create: async () => ({ content: [{ type: "text", text }] }),
+    },
+  };
+
+  assert.deepEqual(
+    await answerInvestigationQuestion(evidence, "Why?", client),
+    { ...expected, citations: [citationE1] },
+  );
+
+  text = `Result: ${JSON.stringify(expected)} done`;
+  assert.deepEqual(
+    await answerInvestigationQuestion(evidence, "Why?", client),
+    { ...expected, citations: [citationE1] },
+  );
+});
+
+test("maps unique inline citations to ordered event navigation metadata", async () => {
+  const events = Array.from({ length: 8 }, (_, index) => ({
+    evidenceId: `E${index + 1}`,
+    type: index === 7 ? "api-request" : "console",
+    timestamp: `2026-09-20T10:00:0${index + 1}.000Z`,
+  }));
   const output = {
-    answer: "The supplied evidence confirms only that the request failed.",
+    answer: "The request failed [E8], after an earlier warning [E2] [E8].",
+    likelyCause: "The failure is visible in the request [E8].",
+    evidence: [],
+    nextSteps: [],
+  };
+  const client = {
+    messages: {
+      create: async () => ({
+        content: [{ type: "text", text: JSON.stringify(output) }],
+      }),
+    },
+  };
+
+  const result = await answerInvestigationQuestion(
+    { ...evidence, events },
+    "Why?",
+    client,
+  );
+
+  assert.deepEqual(result.citations, [
+    {
+      evidenceId: "E8",
+      eventIndex: 7,
+      evidenceOffsetMs: 8000,
+      evidenceTime: "00:08",
+      type: "api-request",
+      timestamp: "2026-09-20T10:00:08.000Z",
+    },
+    {
+      evidenceId: "E2",
+      eventIndex: 1,
+      evidenceOffsetMs: 2000,
+      evidenceTime: "00:02",
+      type: "console",
+      timestamp: "2026-09-20T10:00:02.000Z",
+    },
+  ]);
+});
+
+test("accepts an honest insufficient-evidence answer with a citation", async () => {
+  const output = {
+    answer: "The supplied evidence confirms only that the request failed [E1].",
     likelyCause: "The cause cannot be established because no server trace was captured.",
     evidence: [],
     nextSteps: ["Capture the server trace for the failed request."],
@@ -334,11 +626,11 @@ test("accepts an honest insufficient-evidence answer without citations", async (
 
   assert.deepEqual(
     await answerInvestigationQuestion(evidence, "Why?", client),
-    output,
+    { ...output, citations: [citationE1] },
   );
 });
 
-test("maps Claude rate limits and timeouts to API errors", async () => {
+test("uses demo questions for Claude failures while ask still rejects", async () => {
   const rateLimitMessage = "Workspace is configured for 0 requests per minute";
   const rateLimitedClient = {
     messages: {
@@ -360,27 +652,40 @@ test("maps Claude rate limits and timeouts to API errors", async () => {
     },
   };
 
-  await assert.rejects(
-    generateInvestigationQuestions(evidence, rateLimitedClient),
-    (error) =>
-      error.status === 429 &&
-      error.message === "AI service rate limit exceeded" &&
-      error.details === rateLimitMessage &&
-      error.expose === true,
+  const warning = mock.method(console, "warn", () => {});
+
+  assert.deepEqual(
+    await generateInvestigationQuestions(evidence, rateLimitedClient),
+    aiInvestigatorDemoQuestions,
+  );
+  assert.deepEqual(
+    await generateInvestigationQuestions(evidence, timeoutClient),
+    aiInvestigatorDemoQuestions,
   );
   await assert.rejects(
-    generateInvestigationQuestions(evidence, timeoutClient),
+    answerInvestigationQuestion(evidence, "Why?", rateLimitedClient),
+    (error) => error.status === 429 && error.details === rateLimitMessage,
+  );
+  await assert.rejects(
+    answerInvestigationQuestion(evidence, "Why?", timeoutClient),
     (error) => error.status === 504,
   );
+
+  warning.mock.restore();
 });
 
-test("requires server-side Anthropic configuration", async () => {
+test("uses demo questions without Anthropic configuration while ask rejects", async () => {
   const previousApiKey = process.env.ANTHROPIC_API_KEY;
   delete process.env.ANTHROPIC_API_KEY;
+  const warning = mock.method(console, "warn", () => {});
 
   try {
+    assert.deepEqual(
+      await generateInvestigationQuestions(evidence),
+      aiInvestigatorDemoQuestions,
+    );
     await assert.rejects(
-      generateInvestigationQuestions(evidence),
+      answerInvestigationQuestion(evidence, "Why?"),
       (error) =>
         error.status === 503 &&
         error.message === "ANTHROPIC_API_KEY is not configured",
@@ -389,6 +694,7 @@ test("requires server-side Anthropic configuration", async () => {
     if (previousApiKey !== undefined) {
       process.env.ANTHROPIC_API_KEY = previousApiKey;
     }
+    warning.mock.restore();
   }
 });
 

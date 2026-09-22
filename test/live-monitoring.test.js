@@ -232,6 +232,144 @@ test("one dashboard cannot stop another dashboard's subscription", async () => {
   assert.deepEqual(await agent.next(), { type: "STOP_LIVE" });
 });
 
+test("an active dashboard can send a validated instruction to every matching tab", async () => {
+  const url = await startLiveServer();
+  const dashboard = await connect(url);
+  const firstTab = await connect(url);
+  const secondTab = await connect(url);
+  const otherAgent = await connect(url);
+
+  dashboard.send({
+    type: "DASHBOARD_CONNECT",
+    clientKey: "democrm",
+    userId: 120040,
+  });
+  await dashboard.next();
+
+  for (const [agent, tabId, clientKey, userId] of [
+    [firstTab, "tab-a", "democrm", 120040],
+    [secondTab, "tab-b", "democrm", "120040"],
+    [otherAgent, "tab-x", "anothercrm", 550],
+  ]) {
+    agent.send({ type: "AGENT_CONNECT", clientKey, userId, tabId });
+  }
+
+  await dashboard.next(
+    (message) => message.type === "AGENTS" && message.agents[0]?.tabs.length === 2,
+  );
+  dashboard.send({
+    type: "START_LIVE",
+    clientKey: "democrm",
+    userId: 120040,
+  });
+  await firstTab.next((message) => message.type === "START_LIVE");
+  await secondTab.next((message) => message.type === "START_LIVE");
+
+  dashboard.send({
+    type: "AGENT_INSTRUCTION",
+    clientKey: "democrm",
+    userId: 120040,
+    instruction: { text: "  Please refresh and try again.  " },
+  });
+
+  const firstInstruction = await firstTab.next(
+    (message) => message.type === "AGENT_INSTRUCTION",
+  );
+  const secondInstruction = await secondTab.next(
+    (message) => message.type === "AGENT_INSTRUCTION",
+  );
+
+  for (const instruction of [firstInstruction, secondInstruction]) {
+    assert.equal(instruction.instruction.text, "Please refresh and try again.");
+    assert.equal(
+      Number.isNaN(Date.parse(instruction.instruction.sentAt)),
+      false,
+    );
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(
+    otherAgent
+      .getMessages()
+      .some((message) => message.type === "AGENT_INSTRUCTION"),
+    false,
+  );
+});
+
+test("instructions are rejected outside the selected active live session", async () => {
+  const url = await startLiveServer();
+  const dashboard = await connect(url);
+  const agent = await connect(url);
+  const impersonatingAgent = await connect(url);
+
+  dashboard.send({
+    type: "DASHBOARD_CONNECT",
+    clientKey: "democrm",
+    userId: 1,
+  });
+  await dashboard.next();
+  agent.send({
+    type: "AGENT_CONNECT",
+    clientKey: "democrm",
+    userId: 1,
+    tabId: "tab-a",
+  });
+  impersonatingAgent.send({
+    type: "AGENT_CONNECT",
+    clientKey: "democrm",
+    userId: 2,
+    tabId: "tab-b",
+  });
+  await dashboard.next((message) => message.agents[0]?.tabs.length === 1);
+
+  const sendInstruction = (sender, overrides = {}) =>
+    sender.send({
+      type: "AGENT_INSTRUCTION",
+      clientKey: "democrm",
+      userId: 1,
+      instruction: { text: "Must not be delivered" },
+      ...overrides,
+    });
+
+  sendInstruction(dashboard);
+  sendInstruction(dashboard, { userId: 2 });
+  sendInstruction(impersonatingAgent);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(
+    agent.getMessages().some((message) => message.type === "AGENT_INSTRUCTION"),
+    false,
+  );
+
+  dashboard.send({ type: "START_LIVE", clientKey: "democrm", userId: 1 });
+  await agent.next((message) => message.type === "START_LIVE");
+
+  for (const instruction of [
+    undefined,
+    null,
+    {},
+    { text: "" },
+    { text: "   " },
+    { text: 123 },
+    { text: "x".repeat(501) },
+  ]) {
+    sendInstruction(dashboard, { instruction });
+  }
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(
+    agent.getMessages().some((message) => message.type === "AGENT_INSTRUCTION"),
+    false,
+  );
+
+  dashboard.send({ type: "STOP_LIVE", clientKey: "democrm", userId: 1 });
+  await agent.next((message) => message.type === "STOP_LIVE");
+  sendInstruction(dashboard);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(
+    agent.getMessages().some((message) => message.type === "AGENT_INSTRUCTION"),
+    false,
+  );
+});
+
 test("the backend rejects unlisted origins and ignores malformed messages", async () => {
   const url = await startLiveServer();
 

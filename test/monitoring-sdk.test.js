@@ -80,6 +80,7 @@ function createBrowserContext() {
     const elementListeners = new Map();
     const element = {
       tagName: tagName.toUpperCase(),
+      children: [],
       dataset: {},
       disabled: false,
       style: {},
@@ -103,13 +104,32 @@ function createBrowserContext() {
           ),
         );
       },
+      appendChild(child) {
+        child.parentNode = this;
+        this.children.push(child);
+        return child;
+      },
+      remove() {
+        if (!this.parentNode) return;
+        const index = this.parentNode.children.indexOf(this);
+        if (index >= 0) this.parentNode.children.splice(index, 1);
+        this.parentNode = null;
+      },
+      get firstElementChild() {
+        return this.children[0] ?? null;
+      },
       attachShadow() {
         const nodes = new Map();
         this.shadowRoot = {
           innerHTML: "",
           getElementById(id) {
             if (!nodes.has(id)) {
-              nodes.set(id, createElement(id === "details" ? "form" : "button"));
+              const tagName = id === "details"
+                ? "form"
+                : id === "notifications"
+                ? "div"
+                : "button";
+              nodes.set(id, createElement(tagName));
             }
             return nodes.get(id);
           },
@@ -149,7 +169,9 @@ function createBrowserContext() {
     },
     document: {
       body: {
-        appendChild() {},
+        appendChild(element) {
+          element.parentNode = this;
+        },
       },
       currentScript: {
         src: "https://logger.example.com/monitoring/v1/monitoring.min.js",
@@ -1053,6 +1075,137 @@ test("live events are additive and stop without affecting HTTP reporting", async
   assert.deepEqual(
     payload.events.map((event) => event.message),
     ["Streamed and queued", "Queued only"],
+  );
+});
+
+test("live instructions render safe dismissible notifications only while monitoring", async () => {
+  const bundle = await readFile(bundlePath, "utf8");
+  const { browser, elements } = createBrowserContext();
+  const FakeWebSocket = createFakeWebSocket();
+  browser.WebSocket = FakeWebSocket;
+  browser.document.currentScript.dataset.websocketEndPoint =
+    "ws://localhost:5001/api/live-monitoring";
+  const context = vm.createContext(browser);
+
+  vm.runInContext(
+    `window.KaptureMonitoringConfig = {
+      getClientDetails: () => ({ clientKey: "democrm", userId: 120040 })
+    }`,
+    context,
+  );
+  vm.runInContext(bundle, context);
+
+  const socket = FakeWebSocket.instances[0];
+  socket.open();
+  socket.receive({
+    type: "AGENT_INSTRUCTION",
+    instruction: { text: "Ignored before start" },
+  });
+  assert.equal(
+    elements.some((element) => element.dataset.kaptureInstructions),
+    false,
+  );
+
+  socket.receive({ type: "START_LIVE" });
+  socket.receive({
+    type: "AGENT_INSTRUCTION",
+    instruction: {
+      text: "<img src=x onerror=alert(1)> Please retry.",
+      sentAt: "2026-09-22T10:30:00.000Z",
+    },
+  });
+
+  const host = elements.find(
+    (element) => element.dataset.kaptureInstructions === "true",
+  );
+  const notifications = host.shadowRoot.getElementById("notifications");
+  assert.equal(notifications.children.length, 1);
+  assert.equal(
+    notifications.children[0].children[1].textContent,
+    "<img src=x onerror=alert(1)> Please retry.",
+  );
+
+  for (let index = 2; index <= 6; index += 1) {
+    socket.receive({
+      type: "AGENT_INSTRUCTION",
+      instruction: {
+        text: `Message ${index}`,
+        sentAt: "2026-09-22T10:30:00.000Z",
+      },
+    });
+  }
+
+  assert.equal(notifications.children.length, 5);
+  assert.equal(notifications.children[0].children[1].textContent, "Message 2");
+  const dismissButton = notifications.children[0].children[0].children[1];
+  await dismissButton.click();
+  assert.equal(notifications.children.length, 4);
+
+  socket.receive({ type: "STOP_LIVE" });
+  socket.receive({
+    type: "AGENT_INSTRUCTION",
+    instruction: { text: "Ignored after stop" },
+  });
+  socket.receive({ type: "START_LIVE" });
+  socket.receive({
+    type: "AGENT_INSTRUCTION",
+    instruction: { text: "x".repeat(501) },
+  });
+  socket.receive({
+    type: "AGENT_INSTRUCTION",
+    instruction: { text: 123 },
+  });
+  assert.equal(notifications.children.length, 4);
+});
+
+test("a live instruction waits for the document body before rendering", async () => {
+  const bundle = await readFile(bundlePath, "utf8");
+  const { browser, elements } = createBrowserContext();
+  const FakeWebSocket = createFakeWebSocket();
+  browser.WebSocket = FakeWebSocket;
+  browser.document.body = null;
+  browser.document.currentScript.dataset.websocketEndPoint =
+    "ws://localhost:5001/api/live-monitoring";
+  const context = vm.createContext(browser);
+
+  vm.runInContext(
+    `window.KaptureMonitoringConfig = {
+      getClientDetails: () => ({ clientKey: "democrm", userId: 120040 })
+    }`,
+    context,
+  );
+  vm.runInContext(bundle, context);
+
+  const socket = FakeWebSocket.instances[0];
+  socket.open();
+  socket.receive({ type: "START_LIVE" });
+  socket.receive({
+    type: "AGENT_INSTRUCTION",
+    instruction: {
+      text: "Wait for the page",
+      sentAt: "2026-09-22T10:30:00.000Z",
+    },
+  });
+  assert.equal(
+    elements.some((element) => element.dataset.kaptureInstructions),
+    false,
+  );
+
+  browser.document.body = {
+    appendChild(element) {
+      element.parentNode = this;
+    },
+  };
+  browser.dispatchEvent({ type: "DOMContentLoaded" });
+
+  const host = elements.find(
+    (element) => element.dataset.kaptureInstructions === "true",
+  );
+  const notifications = host.shadowRoot.getElementById("notifications");
+  assert.equal(notifications.children.length, 1);
+  assert.equal(
+    notifications.children[0].children[1].textContent,
+    "Wait for the page",
   );
 });
 

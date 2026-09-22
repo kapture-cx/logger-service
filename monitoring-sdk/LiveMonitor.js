@@ -1,4 +1,5 @@
 import { getTabId } from "./Identity.js";
+import { showAgentInstruction } from "./AgentInstructions.js";
 
 const INITIAL_RECONNECT_DELAY = 1000;
 const MAX_RECONNECT_DELAY = 30000;
@@ -134,6 +135,12 @@ function handleMessage(event) {
       enabled = true;
     } else if (message?.type === "STOP_LIVE") {
       enabled = false;
+    } else if (
+      message?.type === "AGENT_INSTRUCTION" &&
+      enabled &&
+      identityKey
+    ) {
+      showAgentInstruction(message.instruction);
     }
   } catch (error) {
     // Malformed live-monitoring messages must not affect the host application.

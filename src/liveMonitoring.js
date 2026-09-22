@@ -2,6 +2,7 @@ import { WebSocket, WebSocketServer } from "ws";
 
 const LIVE_MONITORING_PATH = "/api/live-monitoring";
 const HEARTBEAT_INTERVAL = 30000;
+const MAX_INSTRUCTION_LENGTH = 500;
 
 function normalizeValue(value) {
   if (value === undefined || value === null) {
@@ -244,6 +245,36 @@ export function attachLiveMonitoring(
     }
   }
 
+  function handleAgentInstruction(socket, message) {
+    if (socket.role !== "dashboard") {
+      return;
+    }
+
+    const agentKey = getAgentKey(message.clientKey, message.userId);
+    const text =
+      typeof message.instruction?.text === "string"
+        ? message.instruction.text.trim()
+        : "";
+
+    if (
+      !agentKey ||
+      agentKey !== socket.agentFilter ||
+      !socket.subscriptions.has(agentKey) ||
+      !text ||
+      text.length > MAX_INSTRUCTION_LENGTH
+    ) {
+      return;
+    }
+
+    sendToAgent(agentKey, {
+      type: "AGENT_INSTRUCTION",
+      instruction: {
+        text,
+        sentAt: new Date().toISOString(),
+      },
+    });
+  }
+
   function routeLiveEvent(socket, message) {
     const agentKey = socket.agentRegistration?.agentKey;
 
@@ -290,6 +321,8 @@ export function attachLiveMonitoring(
         message.type === "STOP_LIVE"
       ) {
         handleDashboardCommand(socket, message);
+      } else if (message.type === "AGENT_INSTRUCTION") {
+        handleAgentInstruction(socket, message);
       } else if (message.type === "LIVE_EVENT") {
         routeLiveEvent(socket, message);
       }

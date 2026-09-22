@@ -362,6 +362,25 @@ following protocol:
 5. Stop an agent with
    `{ "type": "STOP_LIVE", "clientKey": "democrm", "userId": "120040" }`.
 
+While that dashboard has an active live subscription, it can send a temporary
+plain-text instruction to every connected tab for the selected agent:
+
+```json
+{
+  "type": "AGENT_INSTRUCTION",
+  "clientKey": "democrm",
+  "userId": "120040",
+  "instruction": {
+    "text": "Please refresh the customer page and try again."
+  }
+}
+```
+
+Instructions are trimmed, limited to 500 characters, and delivered only to
+tabs that are connected at that moment. They are not stored, retried, or
+replayed after reconnection. The SDK displays each accepted instruction as a
+dismissible notification.
+
 Presence is grouped by `clientKey:userId`, while the `tabs` array preserves each
 browser tab's existing `tabId`. Each dashboard receives presence only for the
 exact identity supplied in its latest `DASHBOARD_CONNECT`; sending that message
